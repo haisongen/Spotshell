@@ -1,0 +1,38 @@
+{
+  "name": "@spotshell/desktop",
+  "version": "1.2.0",
+  "private": true,
+  "description": "SpotShell desktop - multi-session SSH with AI agent",
+  "author": "SpotShell",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "pack": "npm run build && electron-builder --win --config electron-builder.yml",
+    "start": "electron-vite preview",
+    "test": "tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@spotshell/core": "1.0.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "lucide-react": "^1.24.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ssh2": "^1.16.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@langchain/core": "^1.0.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ssh2": "^1.15.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "33.4.11",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.11"
+  }
+}

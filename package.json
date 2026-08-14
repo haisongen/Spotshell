@@ -1,0 +1,23 @@
+{
+  "name": "spotshell-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @spotshell/core && npm run build -w @spotshell/cli && npm run build -w @spotshell/desktop",
+    "build:core": "npm run build -w @spotshell/core",
+    "build:cli": "npm run build -w @spotshell/cli",
+    "dev:cli": "npm run dev -w @spotshell/cli",
+    "dev:desktop": "npm run dev -w @spotshell/desktop",
+    "test": "npm run test -w @spotshell/core && npm run test -w @spotshell/desktop",
+    "start": "npm run start -w @spotshell/cli"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.21.5"
+  }
+}

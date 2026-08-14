@@ -1,0 +1,34 @@
+appId: com.spotshell.app
+productName: SpotShell
+electronVersion: 33.4.11
+directories:
+  output: release
+files:
+  - out/**/*
+  - package.json
+  - resources/icon.ico
+  - resources/icon.png
+extraResources:
+  - from: resources/icon.ico
+    to: icon.ico
+  - from: resources/icon.png
+    to: icon.png
+extraMetadata:
+  main: out/main/index.js
+beforeBuild: scripts/before-build.js
+npmRebuild: false
+nodeGypRebuild: false
+buildDependenciesFromSource: false
+removePackageScripts: true
+win:
+  icon: resources/icon.ico
+  target:
+    - target: portable
+      arch: [x64]
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico

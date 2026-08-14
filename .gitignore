@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.codegraph/
+# Build output
+dist/
+packages/*/dist/
+packages/desktop/out/
+packages/desktop/release/
+release/
+docs/*
+!docs/pushGithub/
+!docs/pushGithub/README.md
+# Environment files
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+.claude/worktrees/
+
+#
+.scratch/
+
+#
+ppt/
