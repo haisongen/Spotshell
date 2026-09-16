@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
+  ArrowUpDown,
   ChevronDown,
   ChevronUp,
   Code2,
@@ -9,11 +10,15 @@ import {
   FileText,
   History,
   Layers3,
+  FolderOpen,
   Link2,
   Plus,
+  RefreshCw,
   Save,
+  Search,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react'
 import type {
   EnvironmentDeletePreview,
@@ -28,18 +33,29 @@ import type {
   ModuleImportConflictResolution,
 } from '../../shared/ipc-types'
 import { useTranslation } from '../i18n'
+import { useListboxNavigation } from '../hooks/useListboxNavigation'
+import { useScrollMemory } from '../hooks/useScrollMemory'
+import {
+  filterKnowledgeItems,
+  sortKnowledgeItems,
+  type KnowledgeSortMode,
+} from '../knowledgeFilter'
 import {
   DraftSaveQueue,
   type KnowledgeDraftSaveMode,
   type KnowledgeEditorMode,
 } from '../knowledgeSaveQueue'
+import { activeOptionIndex } from '../listboxNavigation'
 import {
-  ExternalChangesHeaderActions,
+  ExternalChangesIndicator,
   ExternalChangesReviewPanel,
   useExternalChanges,
 } from './ExternalChangesPanel'
 import { ManagedFilesPanel } from './ManagedFilesPanel'
+import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu'
 import { RevisionHistoryPanel } from './RevisionHistoryPanel'
+import { SaveStateBadge } from './SaveStateBadge'
+import { TagChips } from './TagChips'
 
 interface EnvironmentWorkspaceProps {
   active: boolean
@@ -74,6 +90,8 @@ export function EnvironmentWorkspace({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<EnvironmentDetail | null>(null)
   const [mode, setMode] = useState<EnvironmentEditorMode>('form')
+  const [query, setQuery] = useState('')
+  const [sortMode, setSortMode] = useState<KnowledgeSortMode>('name')
   const [tagsText, setTagsText] = useState('')
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -509,6 +527,30 @@ export function EnvironmentWorkspace({
   const busy = creating || publishing || exporting || importing || deleting
     || Boolean(exportPreview)
     || Boolean(importSession)
+  const visibleEnvironments = useMemo(
+    () => sortKnowledgeItems(filterKnowledgeItems(environments, query), sortMode),
+    [environments, query, sortMode]
+  )
+  const sortItems: OverflowMenuItem[] = [
+    {
+      key: 'name',
+      label: t('knowledgeSortName'),
+      checked: sortMode === 'name',
+      onSelect: () => setSortMode('name'),
+    },
+    {
+      key: 'recent',
+      label: t('knowledgeSortRecent'),
+      checked: sortMode === 'recent',
+      onSelect: () => setSortMode('recent'),
+    },
+  ]
+  const editorScroll = useScrollMemory<HTMLDivElement>(`${selectedId ?? ''}:${mode}`)
+  const listNav = useListboxNavigation<HTMLDivElement>()
+  const tabStopIndex = activeOptionIndex(
+    visibleEnvironments.map((environment) => environment.id),
+    selectedId
+  )
 
   const exportPanel = exportPreview ? (
     <div className="knowledge-import-conflict" role="dialog" aria-label={t('environmentExportPreviewTitle')}>
@@ -700,13 +742,48 @@ export function EnvironmentWorkspace({
     },
   })
 
+  const secondaryActions: OverflowMenuItem[] = [
+    {
+      key: 'open-folder',
+      label: t('externalChangesOpenFolder'),
+      icon: <FolderOpen size={14} aria-hidden="true" />,
+      disabled: busy || deleting || externalChanges.busy,
+      onSelect: () => { void externalChanges.openFolder() },
+    },
+    {
+      key: 'rescan',
+      label: t('externalChangesRescan'),
+      icon: <RefreshCw size={14} aria-hidden="true" />,
+      disabled: busy || deleting || externalChanges.busy,
+      onSelect: () => { void externalChanges.refresh() },
+    },
+    {
+      key: 'export',
+      label: exporting ? t('knowledgeExporting') : t('environmentExport'),
+      icon: <Download size={14} aria-hidden="true" />,
+      disabled: busy || deleting || !detail?.latestRevision,
+      onSelect: () => { void beginExport() },
+    },
+    {
+      key: 'delete',
+      label: t('environmentDelete'),
+      icon: <Trash2 size={14} aria-hidden="true" />,
+      disabled: busy || deleting,
+      onSelect: () => { void beginDelete() },
+    },
+  ]
+
   return (
     <>
       <aside className="knowledge-list-pane">
         <div className="knowledge-pane-header">
           <div>
             <h1>{t('environmentProfiles')}</h1>
-            <span>{environments.length}</span>
+            <span>
+              {visibleEnvironments.length === environments.length
+                ? environments.length
+                : `${visibleEnvironments.length} / ${environments.length}`}
+            </span>
           </div>
           <div className="knowledge-pane-header-actions">
             <button
@@ -731,35 +808,91 @@ export function EnvironmentWorkspace({
             </button>
           </div>
         </div>
-        <div className="knowledge-module-list" role="listbox" aria-label={t('environmentProfiles')}>
+        <div className="knowledge-list-search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            placeholder={t('environmentSearch')}
+            aria-label={t('environmentSearch')}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && query) {
+                event.stopPropagation()
+                setQuery('')
+              }
+            }}
+          />
+          {query ? (
+            <button
+              type="button"
+              className="knowledge-list-search-clear"
+              title={t('knowledgeSearchClear')}
+              aria-label={t('knowledgeSearchClear')}
+              onClick={() => setQuery('')}
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+          <OverflowMenu
+            label={t('knowledgeSortBy')}
+            heading={t('knowledgeSortBy')}
+            boundarySelector=".knowledge-list-pane"
+            triggerIcon={<ArrowUpDown size={14} aria-hidden="true" />}
+            items={sortItems}
+          />
+        </div>
+        <div
+          ref={listNav.listRef}
+          className="knowledge-module-list"
+          role="listbox"
+          aria-label={t('environmentProfiles')}
+          onKeyDown={listNav.onKeyDown}
+        >
           {loading ? <p className="muted knowledge-list-state">{t('loading')}</p> : null}
           {!loading && environments.length === 0 ? (
             <div className="knowledge-list-state">
               <Layers3 size={22} aria-hidden="true" />
               <p>{t('environmentEmpty')}</p>
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => { void createEnvironment() }}>
-                <Plus size={14} aria-hidden="true" />
-                {t('environmentCreate')}
-              </button>
+              <div className="knowledge-empty-actions">
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => { void createEnvironment() }}>
+                  <Plus size={14} aria-hidden="true" />
+                  {t('environmentCreate')}
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => { void beginImport() }}>
+                  <Upload size={14} aria-hidden="true" />
+                  {t('environmentImport')}
+                </button>
+              </div>
             </div>
           ) : null}
-          {environments.map((environment) => (
+          {!loading && environments.length > 0 && visibleEnvironments.length === 0 ? (
+            <div className="knowledge-list-state">
+              <Search size={22} aria-hidden="true" />
+              <p>{t('knowledgeSearchNoMatch', { query })}</p>
+            </div>
+          ) : null}
+          {visibleEnvironments.map((environment, index) => (
             <button
               key={environment.id}
               type="button"
               role="option"
               aria-selected={selectedId === environment.id}
+              tabIndex={index === tabStopIndex ? 0 : -1}
               className={`knowledge-module-row${selectedId === environment.id ? ' active' : ''}`}
               disabled={publishing}
               onClick={() => { void selectEnvironment(environment.id) }}
             >
               <span className="knowledge-module-name">{environment.name}</span>
-              <span className="knowledge-module-description">{environment.description}</span>
-              <span className="knowledge-module-version">
+              <span
+                className={`knowledge-module-version${environment.latestRevision ? '' : ' unpublished'}`}
+              >
                 {environment.latestRevision
                   ? t('knowledgeRevisionShort', { revision: environment.latestRevision })
                   : t('knowledgeDraftOnly')}
               </span>
+              <span className="knowledge-module-description">{environment.description}</span>
+              <TagChips tags={environment.tags} />
             </button>
           ))}
         </div>
@@ -770,6 +903,16 @@ export function EnvironmentWorkspace({
           <div className="knowledge-detail-empty">
             <Layers3 size={28} aria-hidden="true" />
             <p>{t('environmentSelect')}</p>
+            <div className="knowledge-empty-actions">
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => { void createEnvironment() }}>
+                <Plus size={14} aria-hidden="true" />
+                {t('environmentCreate')}
+              </button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => { void beginImport() }}>
+                <Upload size={14} aria-hidden="true" />
+                {t('environmentImport')}
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -790,29 +933,14 @@ export function EnvironmentWorkspace({
                 </div>
               </div>
               <div className="knowledge-detail-actions">
-                {saveStatus ? <span className={`knowledge-save-state ${saveState}`}>{saveStatus}</span> : null}
-                <ExternalChangesHeaderActions
-                  model={externalChanges}
-                  disabled={busy || deleting || saveState === 'saving'}
-                />
-                <button
-                  type="button"
-                  className="btn btn-secondary"
+                <SaveStateBadge state={saveState} label={saveStatus} />
+                <ExternalChangesIndicator model={externalChanges} />
+                <OverflowMenu
+                  label={t('environmentMoreActions')}
+                  boundarySelector=".knowledge-detail-pane"
                   disabled={busy || deleting}
-                  onClick={() => { void beginDelete() }}
-                >
-                  <Trash2 size={15} aria-hidden="true" />
-                  {t('environmentDelete')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={!detail.latestRevision || busy || deleting}
-                  onClick={() => { void beginExport() }}
-                >
-                  <Download size={15} aria-hidden="true" />
-                  {exporting ? t('knowledgeExporting') : t('environmentExport')}
-                </button>
+                  items={secondaryActions}
+                />
                 <button
                   type="button"
                   className="btn btn-primary"
@@ -831,10 +959,8 @@ export function EnvironmentWorkspace({
             />
 
             {deletePreview ? (
-              <section className="knowledge-access-panel" aria-label={t('environmentDeleteTitle')}>
-                <div className="knowledge-access-item">
-                  <strong>{t('environmentDeleteTitle')}</strong>
-                </div>
+              <section className="knowledge-confirm-panel" aria-label={t('environmentDeleteTitle')}>
+                <strong>{t('environmentDeleteTitle')}</strong>
                 {deletePreview.canDelete ? (
                   <p className="muted">
                     {t('environmentDeleteConfirm', {
@@ -848,7 +974,7 @@ export function EnvironmentWorkspace({
                     <p className="muted">
                       {t('environmentDeleteBlocked', { count: deletePreview.boundHosts.length })}
                     </p>
-                    <ul className="knowledge-module-list">
+                    <ul className="knowledge-confirm-list">
                       {deletePreview.boundHosts.map((host) => (
                         <li key={host.hostId}>
                           {t('environmentDeleteBoundHost', { name: host.hostName })}
@@ -949,7 +1075,7 @@ export function EnvironmentWorkspace({
             ) : null}
 
             {mode === 'form' && form ? (
-              <div className="knowledge-form-editor environment-form-editor" role="tabpanel">
+              <div className="knowledge-form-editor environment-form-editor" role="tabpanel" ref={editorScroll.ref} onScroll={editorScroll.onScroll}>
                 <div className="knowledge-form-grid">
                   <label className="field">
                     <span>{t('knowledgeName')}</span>
@@ -979,7 +1105,7 @@ export function EnvironmentWorkspace({
                 </label>
               </div>
             ) : mode === 'associations' && form ? (
-              <div className="knowledge-form-editor" role="tabpanel">
+              <div className="knowledge-form-editor" role="tabpanel" ref={editorScroll.ref} onScroll={editorScroll.onScroll}>
                 <section className="environment-associations" aria-label={t('environmentAssociations')}>
                   <div className="environment-associations-header">
                     <h3>{t('environmentAssociations')}</h3>
@@ -1044,7 +1170,7 @@ export function EnvironmentWorkspace({
                 }}
               />
             ) : (
-              <div className="knowledge-source-editor" role="tabpanel">
+              <div className="knowledge-source-editor" role="tabpanel" ref={editorScroll.ref} onScroll={editorScroll.onScroll}>
                 <textarea
                   aria-label={t('knowledgeSourceMode')}
                   disabled={publishing}

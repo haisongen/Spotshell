@@ -150,6 +150,31 @@ interface ExternalChangesHeaderActionsProps {
   disabled?: boolean
 }
 
+/**
+ * Standalone external-edit status badge. Headers that moved folder/rescan into an
+ * overflow menu still keep this visible so a pending edit stays noticeable.
+ */
+export function ExternalChangesIndicator({
+  model,
+}: {
+  model: ExternalChangesModel
+}): JSX.Element {
+  return (
+    <span
+      className={`external-changes-info${model.pending ? ' pending' : ''}`}
+      tabIndex={0}
+      role="img"
+      aria-label={`${model.statusLabel}. ${model.hintText}`}
+    >
+      <CircleAlert size={15} aria-hidden="true" />
+      <span className="external-changes-tooltip" role="tooltip">
+        <strong>{model.statusLabel}</strong>
+        <span>{model.hintText}</span>
+      </span>
+    </span>
+  )
+}
+
 /** Folder / rescan / info control for the detail header action row. */
 export function ExternalChangesHeaderActions({
   model,
@@ -160,18 +185,7 @@ export function ExternalChangesHeaderActions({
 
   return (
     <div className="external-changes-header-actions">
-      <span
-        className={`external-changes-info${model.pending ? ' pending' : ''}`}
-        tabIndex={0}
-        role="img"
-        aria-label={`${model.statusLabel}. ${model.hintText}`}
-      >
-        <CircleAlert size={15} aria-hidden="true" />
-        <span className="external-changes-tooltip" role="tooltip">
-          <strong>{model.statusLabel}</strong>
-          <span>{model.hintText}</span>
-        </span>
-      </span>
+      <ExternalChangesIndicator model={model} />
       <button
         type="button"
         className="btn btn-secondary btn-sm"

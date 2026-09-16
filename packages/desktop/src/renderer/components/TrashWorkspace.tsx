@@ -6,6 +6,8 @@ import type {
   TrashEntrySummary,
 } from '../../shared/ipc-types'
 import { useTranslation } from '../i18n'
+import { useListboxNavigation } from '../hooks/useListboxNavigation'
+import { activeOptionIndex } from '../listboxNavigation'
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -41,6 +43,8 @@ export function TrashWorkspace({
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [permanentPreview, setPermanentPreview] = useState<PermanentDeletePreview | null>(null)
+  const listNav = useListboxNavigation<HTMLDivElement>()
+  const tabStopIndex = activeOptionIndex(entries.map((entry) => entry.id), selectedId)
 
   async function refreshList(preferredId?: string | null): Promise<void> {
     const items = await window.spotshell.listTrash()
@@ -178,7 +182,13 @@ export function TrashWorkspace({
             </button>
           </div>
         </div>
-        <div className="knowledge-module-list" role="listbox" aria-label={t('trashSection')}>
+        <div
+          ref={listNav.listRef}
+          className="knowledge-module-list"
+          role="listbox"
+          aria-label={t('trashSection')}
+          onKeyDown={listNav.onKeyDown}
+        >
           {loading ? <p className="muted knowledge-list-state">{t('loading')}</p> : null}
           {!loading && entries.length === 0 ? (
             <div className="knowledge-list-state">
@@ -186,12 +196,13 @@ export function TrashWorkspace({
               <p>{t('trashEmpty')}</p>
             </div>
           ) : null}
-          {entries.map((entry) => (
+          {entries.map((entry, index) => (
             <button
               key={entry.id}
               type="button"
               role="option"
               aria-selected={selectedId === entry.id}
+              tabIndex={index === tabStopIndex ? 0 : -1}
               className={`knowledge-module-row${selectedId === entry.id ? ' active' : ''}`}
               disabled={busy}
               onClick={() => setSelectedId(entry.id)}
@@ -273,10 +284,8 @@ export function TrashWorkspace({
             ) : null}
 
             {permanentPreview ? (
-              <section className="knowledge-access-panel" aria-label={t('trashPermanentDeleteTitle')}>
-                <div className="knowledge-access-item">
-                  <strong>{t('trashPermanentDeleteTitle')}</strong>
-                </div>
+              <section className="knowledge-confirm-panel" aria-label={t('trashPermanentDeleteTitle')}>
+                <strong>{t('trashPermanentDeleteTitle')}</strong>
                 <p className="muted">
                   {permanentPreview.canPermanentlyDelete
                     ? t('trashPermanentDeleteConfirm', { name: permanentPreview.name })

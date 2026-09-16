@@ -1,18 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
+  ArrowUpDown,
   BookOpen,
   Code2,
   Download,
   FileStack,
   FileText,
+  FolderOpen,
   History,
   Layers3,
   Plus,
+  RefreshCw,
   RotateCcw,
   Save,
+  Search,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react'
 import type {
   KnowledgeModuleAccessSummary,
@@ -25,19 +30,31 @@ import type {
   SeedModuleStatus,
 } from '../../shared/ipc-types'
 import { useTranslation } from '../i18n'
+import { useListboxNavigation } from '../hooks/useListboxNavigation'
+import { useScrollMemory } from '../hooks/useScrollMemory'
+import {
+  filterKnowledgeItems,
+  sortKnowledgeItems,
+  type KnowledgeSortMode,
+} from '../knowledgeFilter'
 import {
   DraftSaveQueue,
   type KnowledgeDraftSave,
   type KnowledgeEditorMode,
 } from '../knowledgeSaveQueue'
+import { activeOptionIndex } from '../listboxNavigation'
+import { CollapsibleEditor } from './CollapsibleEditor'
 import { EnvironmentWorkspace } from './EnvironmentWorkspace'
 import {
-  ExternalChangesHeaderActions,
+  ExternalChangesIndicator,
   ExternalChangesReviewPanel,
   useExternalChanges,
 } from './ExternalChangesPanel'
 import { ManagedFilesPanel } from './ManagedFilesPanel'
+import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu'
 import { RevisionHistoryPanel } from './RevisionHistoryPanel'
+import { SaveStateBadge } from './SaveStateBadge'
+import { TagChips } from './TagChips'
 import { TrashWorkspace, type TrashRestoredEvent } from './TrashWorkspace'
 
 interface KnowledgeWorkspaceProps {
@@ -66,6 +83,16 @@ export function KnowledgeWorkspace({ hidden, target }: KnowledgeWorkspaceProps):
   useEffect(() => {
     if (target) setSection(target.section)
   }, [target])
+
+  /** Jump from a module's association chip to that environment's editor. */
+  function openEnvironment(environmentId: string): void {
+    setRestoredFocus({
+      section: 'environments',
+      id: environmentId,
+      nonce: Date.now(),
+    })
+    setSection('environments')
+  }
 
   function handleTrashRestored(event: TrashRestoredEvent): void {
     const nextSection = event.kind === 'knowledge' ? 'modules' : 'environments'
@@ -144,6 +171,7 @@ export function KnowledgeWorkspace({ hidden, target }: KnowledgeWorkspaceProps):
           catalogRevision={catalogRevision}
           requestedModuleId={moduleFocusId}
           requestNonce={moduleFocusNonce}
+          onOpenEnvironment={openEnvironment}
         />
       </div>
       <div className="knowledge-workspace" hidden={section !== 'trash'}>
@@ -158,17 +186,21 @@ function KnowledgeModuleWorkspace({
   catalogRevision,
   requestedModuleId,
   requestNonce,
+  onOpenEnvironment,
 }: {
   active: boolean
   catalogRevision: number
   requestedModuleId?: string
   requestNonce?: number
+  onOpenEnvironment?: (environmentId: string) => void
 }): JSX.Element {
   const { t } = useTranslation()
   const [modules, setModules] = useState<KnowledgeModuleAccessSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<KnowledgeModuleDetail | null>(null)
   const [mode, setMode] = useState<KnowledgeEditorMode>('form')
+  const [query, setQuery] = useState('')
+  const [sortMode, setSortMode] = useState<KnowledgeSortMode>('name')
   const [tagsText, setTagsText] = useState('')
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -643,6 +675,30 @@ function KnowledgeModuleWorkspace({
           ? t('knowledgeDraftFailed')
           : null
   const selectedAccess = modules.find((module) => module.id === detail?.id)
+  const visibleModules = useMemo(
+    () => sortKnowledgeItems(filterKnowledgeItems(modules, query), sortMode),
+    [modules, query, sortMode]
+  )
+  const sortItems: OverflowMenuItem[] = [
+    {
+      key: 'name',
+      label: t('knowledgeSortName'),
+      checked: sortMode === 'name',
+      onSelect: () => setSortMode('name'),
+    },
+    {
+      key: 'recent',
+      label: t('knowledgeSortRecent'),
+      checked: sortMode === 'recent',
+      onSelect: () => setSortMode('recent'),
+    },
+  ]
+  const editorScroll = useScrollMemory<HTMLDivElement>(`${selectedId ?? ''}:${mode}`)
+  const listNav = useListboxNavigation<HTMLDivElement>()
+  const tabStopIndex = activeOptionIndex(
+    visibleModules.map((module) => module.id),
+    selectedId
+  )
 
   const conflictPanel = importConflict ? (
     <div className="knowledge-import-conflict" role="dialog" aria-label={t('knowledgeImportConflictTitle')}>
@@ -816,13 +872,56 @@ function KnowledgeModuleWorkspace({
     },
   })
 
+  /** Any in-flight header operation locks the whole action row, menu included. */
+  const headerBusy = publishing
+    || exporting
+    || importing
+    || deleting
+    || saveState === 'saving'
+    || Boolean(importConflict)
+
+  const secondaryActions: OverflowMenuItem[] = [
+    {
+      key: 'open-folder',
+      label: t('externalChangesOpenFolder'),
+      icon: <FolderOpen size={14} aria-hidden="true" />,
+      disabled: headerBusy || externalChanges.busy,
+      onSelect: () => { void externalChanges.openFolder() },
+    },
+    {
+      key: 'rescan',
+      label: t('externalChangesRescan'),
+      icon: <RefreshCw size={14} aria-hidden="true" />,
+      disabled: headerBusy || externalChanges.busy,
+      onSelect: () => { void externalChanges.refresh() },
+    },
+    {
+      key: 'export',
+      label: exporting ? t('knowledgeExporting') : t('knowledgeExport'),
+      icon: <Download size={14} aria-hidden="true" />,
+      disabled: headerBusy || !detail?.latestRevision,
+      onSelect: () => { void exportModule() },
+    },
+    {
+      key: 'delete',
+      label: t('knowledgeDelete'),
+      icon: <Trash2 size={14} aria-hidden="true" />,
+      disabled: headerBusy,
+      onSelect: () => { void beginDelete() },
+    },
+  ]
+
   return (
     <>
       <aside className="knowledge-list-pane">
         <div className="knowledge-pane-header">
           <div>
             <h1>{t('knowledgeModules')}</h1>
-            <span>{modules.length}</span>
+            <span>
+              {visibleModules.length === modules.length
+                ? modules.length
+                : `${visibleModules.length} / ${modules.length}`}
+            </span>
           </div>
           <div className="knowledge-pane-header-actions">
             <button
@@ -857,35 +956,91 @@ function KnowledgeModuleWorkspace({
             </button>
           </div>
         </div>
-        <div className="knowledge-module-list" role="listbox" aria-label={t('knowledgeModules')}>
+        <div className="knowledge-list-search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            placeholder={t('knowledgeSearch')}
+            aria-label={t('knowledgeSearch')}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && query) {
+                event.stopPropagation()
+                setQuery('')
+              }
+            }}
+          />
+          {query ? (
+            <button
+              type="button"
+              className="knowledge-list-search-clear"
+              title={t('knowledgeSearchClear')}
+              aria-label={t('knowledgeSearchClear')}
+              onClick={() => setQuery('')}
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+          <OverflowMenu
+            label={t('knowledgeSortBy')}
+            heading={t('knowledgeSortBy')}
+            boundarySelector=".knowledge-list-pane"
+            triggerIcon={<ArrowUpDown size={14} aria-hidden="true" />}
+            items={sortItems}
+          />
+        </div>
+        <div
+          ref={listNav.listRef}
+          className="knowledge-module-list"
+          role="listbox"
+          aria-label={t('knowledgeModules')}
+          onKeyDown={listNav.onKeyDown}
+        >
           {loading ? <p className="muted knowledge-list-state">{t('loading')}</p> : null}
           {!loading && modules.length === 0 ? (
             <div className="knowledge-list-state">
               <FileText size={22} aria-hidden="true" />
               <p>{t('knowledgeEmpty')}</p>
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => { void createModule() }}>
-                <Plus size={14} aria-hidden="true" />
-                {t('knowledgeCreate')}
-              </button>
+              <div className="knowledge-empty-actions">
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => { void createModule() }}>
+                  <Plus size={14} aria-hidden="true" />
+                  {t('knowledgeCreate')}
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => { void importModule() }}>
+                  <Upload size={14} aria-hidden="true" />
+                  {t('knowledgeImport')}
+                </button>
+              </div>
             </div>
           ) : null}
-          {modules.map((module) => (
+          {!loading && modules.length > 0 && visibleModules.length === 0 ? (
+            <div className="knowledge-list-state">
+              <Search size={22} aria-hidden="true" />
+              <p>{t('knowledgeSearchNoMatch', { query })}</p>
+            </div>
+          ) : null}
+          {visibleModules.map((module, index) => (
             <button
               key={module.id}
               type="button"
               role="option"
               aria-selected={selectedId === module.id}
+              tabIndex={index === tabStopIndex ? 0 : -1}
               className={`knowledge-module-row${selectedId === module.id ? ' active' : ''}`}
               disabled={publishing}
               onClick={() => { void selectModule(module.id) }}
             >
               <span className="knowledge-module-name">{module.name}</span>
-              <span className="knowledge-module-description">{module.description}</span>
-              <span className="knowledge-module-version">
+              <span
+                className={`knowledge-module-version${module.latestRevision ? '' : ' unpublished'}`}
+              >
                 {module.latestRevision
                   ? t('knowledgeRevisionShort', { revision: module.latestRevision })
                   : t('knowledgeDraftOnly')}
               </span>
+              <span className="knowledge-module-description">{module.description}</span>
+              <TagChips tags={module.tags} />
             </button>
           ))}
         </div>
@@ -898,6 +1053,16 @@ function KnowledgeModuleWorkspace({
           <div className="knowledge-detail-empty">
             <FileText size={28} aria-hidden="true" />
             <p>{t('knowledgeSelectModule')}</p>
+            <div className="knowledge-empty-actions">
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => { void createModule() }}>
+                <Plus size={14} aria-hidden="true" />
+                {t('knowledgeCreate')}
+              </button>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => { void importModule() }}>
+                <Upload size={14} aria-hidden="true" />
+                {t('knowledgeImport')}
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -905,75 +1070,37 @@ function KnowledgeModuleWorkspace({
               <div className="knowledge-detail-title">
                 <h2>{detail.name}</h2>
                 <div className="knowledge-managed-meta">
-                  <code title={detail.id}>{detail.id.slice(0, 8)}</code>
+                  <span className="knowledge-meta-pair">
+                    <span className="knowledge-meta-label">{t('knowledgeMetaId')}</span>
+                    <code title={detail.id}>{detail.id.slice(0, 8)}</code>
+                  </span>
                   <span>{t('knowledgeSchemaVersion', { version: 1 })}</span>
-                  <span>
+                  <span className={detail.latestRevision ? undefined : 'unpublished'}>
                     {detail.latestRevision
                       ? t('knowledgeRevision', { revision: detail.latestRevision })
                       : t('knowledgeUnpublished')}
                   </span>
                   {detail.latestContentHash ? (
-                    <code title={detail.latestContentHash}>{detail.latestContentHash.slice(0, 10)}</code>
+                    <span className="knowledge-meta-pair">
+                      <span className="knowledge-meta-label">{t('knowledgeMetaHash')}</span>
+                      <code title={detail.latestContentHash}>{detail.latestContentHash.slice(0, 10)}</code>
+                    </span>
                   ) : null}
                 </div>
               </div>
               <div className="knowledge-detail-actions">
-                {saveStatus ? <span className={`knowledge-save-state ${saveState}`}>{saveStatus}</span> : null}
-                <ExternalChangesHeaderActions
-                  model={externalChanges}
-                  disabled={
-                    publishing
-                    || exporting
-                    || importing
-                    || deleting
-                    || saveState === 'saving'
-                    || Boolean(importConflict)
-                  }
+                <SaveStateBadge state={saveState} label={saveStatus} />
+                <ExternalChangesIndicator model={externalChanges} />
+                <OverflowMenu
+                  label={t('knowledgeMoreActions')}
+                  boundarySelector=".knowledge-detail-pane"
+                  disabled={headerBusy}
+                  items={secondaryActions}
                 />
                 <button
                   type="button"
-                  className="btn btn-secondary"
-                  disabled={
-                    publishing
-                    || exporting
-                    || importing
-                    || deleting
-                    || saveState === 'saving'
-                    || Boolean(importConflict)
-                  }
-                  onClick={() => { void beginDelete() }}
-                >
-                  <Trash2 size={15} aria-hidden="true" />
-                  {t('knowledgeDelete')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={
-                    !detail.latestRevision
-                    || publishing
-                    || exporting
-                    || importing
-                    || deleting
-                    || saveState === 'saving'
-                    || Boolean(importConflict)
-                  }
-                  onClick={() => { void exportModule() }}
-                >
-                  <Download size={15} aria-hidden="true" />
-                  {exporting ? t('knowledgeExporting') : t('knowledgeExport')}
-                </button>
-                <button
-                  type="button"
                   className="btn btn-primary"
-                  disabled={
-                    publishing
-                    || exporting
-                    || importing
-                    || deleting
-                    || saveState === 'saving'
-                    || Boolean(importConflict)
-                  }
+                  disabled={headerBusy}
                   onClick={() => { void publish() }}
                 >
                   <Save size={15} aria-hidden="true" />
@@ -982,23 +1109,11 @@ function KnowledgeModuleWorkspace({
               </div>
             </header>
 
-            <ExternalChangesReviewPanel
-              model={externalChanges}
-              disabled={
-                publishing
-                || exporting
-                || importing
-                || deleting
-                || saveState === 'saving'
-                || Boolean(importConflict)
-              }
-            />
+            <ExternalChangesReviewPanel model={externalChanges} disabled={headerBusy} />
 
             {deletePreview ? (
-              <section className="knowledge-access-panel" aria-label={t('knowledgeDeleteTitle')}>
-                <div className="knowledge-access-item">
-                  <strong>{t('knowledgeDeleteTitle')}</strong>
-                </div>
+              <section className="knowledge-confirm-panel" aria-label={t('knowledgeDeleteTitle')}>
+                <strong>{t('knowledgeDeleteTitle')}</strong>
                 {deletePreview.canDelete ? (
                   <p className="muted">
                     {t('knowledgeDeleteConfirm', {
@@ -1012,7 +1127,7 @@ function KnowledgeModuleWorkspace({
                     <p className="muted">
                       {t('knowledgeDeleteBlocked', { count: deletePreview.referencedBy.length })}
                     </p>
-                    <ul className="knowledge-module-list">
+                    <ul className="knowledge-confirm-list">
                       {deletePreview.referencedBy.map((ref) => (
                         <li key={`${ref.environmentId}-${ref.mode}`}>
                           {t('knowledgeDeleteReferencedEnv', {
@@ -1067,11 +1182,21 @@ function KnowledgeModuleWorkspace({
                 </label>
                 <div className="knowledge-access-item">
                   <span>{t('knowledgeEnvironmentAlways')}</span>
-                  <strong>{associationNames(selectedAccess.environmentAlways, t('knowledgeNoAssociations'))}</strong>
+                  <AssociationChips
+                    associations={selectedAccess.environmentAlways}
+                    emptyLabel={t('knowledgeNoAssociations')}
+                    openLabel={t('knowledgeOpenEnvironment')}
+                    onOpen={onOpenEnvironment}
+                  />
                 </div>
                 <div className="knowledge-access-item">
                   <span>{t('knowledgeEnvironmentOnDemand')}</span>
-                  <strong>{associationNames(selectedAccess.environmentOnDemand, t('knowledgeNoAssociations'))}</strong>
+                  <AssociationChips
+                    associations={selectedAccess.environmentOnDemand}
+                    emptyLabel={t('knowledgeNoAssociations')}
+                    openLabel={t('knowledgeOpenEnvironment')}
+                    onOpen={onOpenEnvironment}
+                  />
                 </div>
               </section>
             ) : null}
@@ -1133,7 +1258,7 @@ function KnowledgeModuleWorkspace({
             ) : null}
 
             {mode === 'form' && detail.form ? (
-              <div className="knowledge-form-editor" role="tabpanel">
+              <div className="knowledge-form-editor" role="tabpanel" ref={editorScroll.ref} onScroll={editorScroll.onScroll}>
                 <div className="knowledge-form-grid">
                   <label className="field">
                     <span>{t('knowledgeName')}</span>
@@ -1166,18 +1291,25 @@ function KnowledgeModuleWorkspace({
                   </label>
                 </div>
                 <div className="knowledge-content-editors">
-                  <label className="field">
-                    <span>{t('knowledgeReferenceBody')}</span>
-                    <textarea disabled={publishing} className="knowledge-markdown-editor" value={detail.form.beforeGuidance} onChange={(event) => updateForm({ beforeGuidance: event.target.value })} />
-                  </label>
-                  <label className="field">
-                    <span>{t('knowledgeGuidance')}</span>
-                    <textarea disabled={publishing} className="knowledge-markdown-editor" value={detail.form.inlineGuidance ?? ''} onChange={(event) => updateForm({ inlineGuidance: event.target.value })} />
-                  </label>
-                  <label className="field">
-                    <span>{t('knowledgeFollowingBody')}</span>
-                    <textarea disabled={publishing} className="knowledge-markdown-editor" value={detail.form.afterGuidance} onChange={(event) => updateForm({ afterGuidance: event.target.value })} />
-                  </label>
+                  <CollapsibleEditor
+                    label={t('knowledgeReferenceBody')}
+                    value={detail.form.beforeGuidance}
+                    disabled={publishing}
+                    defaultOpen
+                    onChange={(beforeGuidance) => updateForm({ beforeGuidance })}
+                  />
+                  <CollapsibleEditor
+                    label={t('knowledgeGuidance')}
+                    value={detail.form.inlineGuidance ?? ''}
+                    disabled={publishing}
+                    onChange={(inlineGuidance) => updateForm({ inlineGuidance })}
+                  />
+                  <CollapsibleEditor
+                    label={t('knowledgeFollowingBody')}
+                    value={detail.form.afterGuidance}
+                    disabled={publishing}
+                    onChange={(afterGuidance) => updateForm({ afterGuidance })}
+                  />
                 </div>
               </div>
             ) : mode === 'files' ? (
@@ -1199,7 +1331,7 @@ function KnowledgeModuleWorkspace({
                 }}
               />
             ) : (
-              <div className="knowledge-source-editor" role="tabpanel">
+              <div className="knowledge-source-editor" role="tabpanel" ref={editorScroll.ref} onScroll={editorScroll.onScroll}>
                 <textarea
                   aria-label={t('knowledgeSourceMode')}
                   disabled={publishing}
@@ -1248,13 +1380,41 @@ function upsertSummary(
   return next.sort((left, right) => left.name.localeCompare(right.name))
 }
 
-function associationNames(
-  associations: KnowledgeModuleAccessSummary['environmentAlways'],
-  emptyLabel: string,
-): string {
-  return associations.length > 0
-    ? associations.map((association) => association.name).join(', ')
-    : emptyLabel
+/**
+ * Environment associations as chips that jump to the environment, replacing a
+ * comma-joined string that truncated and could not be acted on.
+ */
+function AssociationChips({
+  associations,
+  emptyLabel,
+  openLabel,
+  onOpen,
+}: {
+  associations: KnowledgeModuleAccessSummary['environmentAlways']
+  emptyLabel: string
+  openLabel: string
+  onOpen?: (environmentId: string) => void
+}): JSX.Element {
+  if (associations.length === 0) {
+    return <strong className="knowledge-association-empty">{emptyLabel}</strong>
+  }
+
+  return (
+    <div className="knowledge-association-chips">
+      {associations.map((association) => (
+        <button
+          key={association.id}
+          type="button"
+          className="knowledge-association-chip"
+          title={`${openLabel}: ${association.name}`}
+          disabled={!onOpen}
+          onClick={() => onOpen?.(association.id)}
+        >
+          {association.name}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 function errorMessage(error: unknown): string {

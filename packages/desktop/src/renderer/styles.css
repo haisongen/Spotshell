@@ -485,13 +485,83 @@ textarea {
   flex-shrink: 0;
 }
 
+.knowledge-list-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  padding: 7px 10px 7px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.knowledge-list-search > svg {
+  flex: 0 0 14px;
+}
+
+.knowledge-list-search input {
+  appearance: none;
+  min-width: 0;
+  flex: 1;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.knowledge-list-search input::placeholder {
+  color: var(--muted);
+}
+
+/* The native search clear affordance duplicates the button below it. */
+.knowledge-list-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.knowledge-list-search:focus-within {
+  color: var(--accent);
+}
+
+.knowledge-list-search-clear {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.knowledge-list-search-clear:hover,
+.knowledge-list-search-clear:focus-visible {
+  outline: none;
+  color: var(--text);
+  background: var(--hover-fill);
+}
+
+/* Sort trigger shares the search row, so it runs smaller than a header button. */
+.knowledge-list-search .overflow-menu-trigger {
+  width: 22px;
+  height: 22px;
+}
+
 .knowledge-import-conflict {
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--warning, #c9a227) 12%, var(--background));
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg));
 }
 
 .knowledge-import-conflict-body {
@@ -634,6 +704,37 @@ textarea {
   white-space: nowrap;
 }
 
+/* Never published: the row's only cue that this exists as a draft alone. */
+.knowledge-module-version.unpublished {
+  color: var(--warn);
+}
+
+.knowledge-tag-chips {
+  display: flex;
+  overflow: hidden;
+  grid-column: 1 / -1;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.knowledge-tag-chip {
+  overflow: hidden;
+  max-width: 88px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-tag-chip.more {
+  flex-shrink: 0;
+  border-style: dashed;
+}
+
 .knowledge-list-state,
 .knowledge-detail-empty {
   display: flex;
@@ -652,6 +753,14 @@ textarea {
 .knowledge-list-state p,
 .knowledge-detail-empty p {
   margin: 0;
+}
+
+.knowledge-empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .knowledge-list-state .btn,
@@ -675,12 +784,14 @@ textarea {
   flex: 1;
 }
 
+/* 1px grid gaps over a border-coloured panel draw the dividers, so wrapping to
+   fewer columns never leaves a stray border at a row edge. */
 .knowledge-access-panel {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1px;
   border-bottom: 1px solid var(--border);
-  background: var(--background);
+  background: var(--border);
 }
 
 .knowledge-access-item {
@@ -688,14 +799,41 @@ textarea {
   min-width: 0;
   min-height: 52px;
   padding: 8px 12px;
-  border-right: 1px solid var(--border);
   flex-direction: column;
   justify-content: center;
   gap: 4px;
+  background: var(--bg);
 }
 
-.knowledge-access-item:last-child {
-  border-right: 0;
+/* Inline confirmation (delete / permanent delete): a stacked block, not a grid. */
+.knowledge-confirm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg));
+}
+
+.knowledge-confirm-panel > strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.knowledge-confirm-panel p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.knowledge-confirm-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.knowledge-confirm-panel .knowledge-detail-actions {
+  justify-content: flex-end;
 }
 
 .knowledge-access-item > span {
@@ -717,8 +855,29 @@ textarea {
   color: var(--success);
 }
 
+/* The one interactive cell in an otherwise read-only panel: make that legible. */
 .knowledge-authorization-toggle {
   cursor: pointer;
+  border-left: 2px solid var(--accent);
+}
+
+.knowledge-authorization-toggle:hover {
+  background: var(--hover-fill);
+}
+
+.knowledge-authorization-toggle:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.knowledge-authorization-toggle:has(input:disabled) {
+  cursor: not-allowed;
+  border-left-color: var(--border);
+  opacity: 0.65;
+}
+
+.knowledge-authorization-toggle:has(input:disabled):hover {
+  background: var(--bg);
 }
 
 .knowledge-authorization-toggle input {
@@ -726,6 +885,46 @@ textarea {
   height: 16px;
   margin: 0;
   accent-color: var(--accent);
+}
+
+.knowledge-association-empty {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.knowledge-association-chips {
+  display: flex;
+  overflow: hidden;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.knowledge-association-chip {
+  appearance: none;
+  overflow: hidden;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-association-chip:hover:not(:disabled),
+.knowledge-association-chip:focus-visible:not(:disabled) {
+  outline: none;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.knowledge-association-chip:disabled {
+  cursor: default;
 }
 
 .knowledge-detail-header {
@@ -774,6 +973,17 @@ textarea {
 
 .knowledge-detail-actions {
   flex-shrink: 0;
+}
+
+.overflow-menu-trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.overflow-menu-trigger:disabled:hover {
+  color: var(--muted);
+  border-color: transparent;
+  background: transparent;
 }
 
 .external-changes-header-actions {
@@ -851,7 +1061,7 @@ textarea {
   gap: 10px;
   padding: 12px 18px;
   border-bottom: 1px solid var(--border);
-  background: var(--background);
+  background: var(--bg);
 }
 
 .knowledge-external-panel-header {
@@ -868,17 +1078,66 @@ textarea {
 }
 
 .knowledge-save-state {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   color: var(--muted);
   font-size: 11px;
   white-space: nowrap;
 }
 
+.knowledge-save-state.dirty {
+  border-color: var(--border);
+  color: var(--warn);
+}
+
+.knowledge-save-state.saving {
+  border-color: var(--border);
+}
+
 .knowledge-save-state.error {
+  border-color: var(--error);
   color: var(--error);
 }
 
 .knowledge-save-state.saved {
   color: var(--success);
+}
+
+.knowledge-save-spin {
+  animation: knowledge-save-spin 900ms linear infinite;
+}
+
+@keyframes knowledge-save-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-save-spin { animation: none; }
+}
+
+.knowledge-meta-pair {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+}
+
+/* Bare ids and hashes read as noise without a label in front of them. */
+.knowledge-meta-label {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.knowledge-managed-meta .unpublished {
+  color: var(--warn);
 }
 
 .knowledge-editor-tabs {
@@ -1132,7 +1391,7 @@ textarea {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
   gap: 14px;
-  max-width: 1060px;
+  max-width: 1400px;
 }
 
 .knowledge-field-wide {
@@ -1147,16 +1406,92 @@ textarea {
 .knowledge-content-editors {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 14px;
-  max-width: 1060px;
+  gap: 8px;
+  max-width: 1400px;
   margin-top: 18px;
 }
 
-.field textarea.knowledge-markdown-editor {
+.knowledge-collapsible {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.knowledge-collapsible-header {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.knowledge-collapsible-header:hover {
+  background: var(--hover-fill);
+}
+
+.knowledge-collapsible-header:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.knowledge-collapsible-header > svg {
+  flex: 0 0 14px;
+  color: var(--muted);
+}
+
+.knowledge-collapsible-label {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Collapsed sections still report whether they hold content. */
+.knowledge-collapsible-summary {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.knowledge-collapsible.open .knowledge-collapsible-header {
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.knowledge-collapsible-body {
+  padding: 10px 12px 12px;
+}
+
+.knowledge-collapsible-body textarea.knowledge-markdown-editor {
+  display: block;
+  width: 100%;
+}
+
+textarea.knowledge-markdown-editor {
   min-height: 240px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
   resize: vertical;
   font-family: var(--mono);
   font-size: 12px;
+}
+
+textarea.knowledge-markdown-editor:focus-visible {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .managed-files-panel {
@@ -1587,18 +1922,6 @@ textarea {
   .knowledge-form-grid,
   .knowledge-content-editors {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .knowledge-access-panel {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .knowledge-access-item:nth-child(2) {
-    border-right: 0;
-  }
-
-  .knowledge-access-item:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--border);
   }
 
   .knowledge-field-wide,
