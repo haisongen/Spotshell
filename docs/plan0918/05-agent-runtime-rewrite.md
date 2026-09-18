@@ -2,8 +2,15 @@
 
 - 工时：1.5 人天
 - 前置：[② 抽象层](02-agent-message-abstraction.md)、[③ TypeBox](03-tools-typebox.md)、[④ pi-ai Provider](04-providers-pi-ai.md)
-- 可独立交付：❌ 否（与阶段 ④ 同分支连续交付）
+- 可独立交付：✅ 是（④ 已按其修正 2 独立交付，⑤ 不再需要与之捆绑）
 - 上级计划：[README.md](README.md)
+
+## 0. 阶段 ④ 留给本阶段的四件事
+
+1. **删 langchain**：移除 `ModelProvider.createChatModel` 与 `@langchain/openai` / `@langchain/anthropic` / `@langchain/core` / `@langchain/langgraph`，删除 `langchainAdapter.ts`
+2. **`resolveModel` 是异步的**（见 [04 修正 3](04-providers-pi-ai.md)）—— 模型解析必须放在 async 上下文里，`updateModel()` 这类当前同步的方法需要重新设计时序
+3. **接上 `providerContextWindow`** —— `ResolvedModel.providerContextWindow` 目前没有任何调用方传给 `resolveContextWindow()`，4.3 的新优先级尚未真正生效。⚠️ 接上后 `claude-sonnet-4-5` 的窗口会从 `200_000`（KNOWN 表）跳到 `1_000_000`（pi-ai catalog），**上下文用量条读数与压缩触发阈值都会变**，接之前先确认这是期望行为
+4. **`@anthropic-ai/sdk` 版本错配自动消失** —— 当前根提升的是 `0.115.0`（来自 `@langchain/anthropic`），pi-ai 锁的 `0.123.0` 在嵌套目录。因 `electron.vite.config.ts` 把该 SDK 标为 external，运行时 pi-ai 的 anthropic adapter 实际拿到 `0.115.0`。删掉 `@langchain/anthropic` 后 `0.123.0` 会提升到根，错配自行解决。**在那之前 Anthropic 路径存在跨 8 个小版本的 beta 参数形状风险。**
 
 ## 1. 目标
 

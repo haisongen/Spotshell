@@ -39,4 +39,27 @@ describe('model context window', () => {
     assert.equal(resolveContextWindow({ model: 'custom-x' }), DEFAULT_CONTEXT_WINDOW);
     assert.equal(resolveContextWindow({}), DEFAULT_CONTEXT_WINDOW);
   });
+
+  it('prefers a provider-reported window over the prefill table but not over user config', () => {
+    assert.equal(
+      resolveContextWindow({ contextWindowTokens: 32_000, model: 'gpt-4o', providerContextWindow: 400_000 }),
+      32_000,
+    );
+    assert.equal(resolveContextWindow({ model: 'gpt-4o', providerContextWindow: 400_000 }), 400_000);
+    assert.equal(resolveContextWindow({ model: 'unknown-model', providerContextWindow: 400_000 }), 400_000);
+    assert.equal(resolveContextWindow({ providerContextWindow: 400_000 }), 400_000);
+  });
+
+  it('applies the same bounds check to a provider-reported window', () => {
+    assert.equal(
+      resolveContextWindow({ model: 'gpt-4o', providerContextWindow: CONTEXT_WINDOW_MAX + 1 }),
+      128_000,
+    );
+    assert.equal(
+      resolveContextWindow({ model: 'gpt-4o', providerContextWindow: CONTEXT_WINDOW_MIN - 1 }),
+      128_000,
+    );
+    assert.equal(resolveContextWindow({ providerContextWindow: 12.5 }), DEFAULT_CONTEXT_WINDOW);
+    assert.equal(resolveContextWindow({ providerContextWindow: Number.NaN }), DEFAULT_CONTEXT_WINDOW);
+  });
 });

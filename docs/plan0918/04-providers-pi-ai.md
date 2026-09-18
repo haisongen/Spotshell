@@ -3,7 +3,61 @@
 - 工时：1 人天
 - 前置：[⓪ Electron 升级](00-electron-upgrade.md)、[① ESM 迁移](01-esm-migration.md)、[② 消息/工具抽象层](02-agent-message-abstraction.md)
 - 可并行：与 [③ 工具 TypeBox 迁移](03-tools-typebox.md) 无依赖
+- **状态：已执行并验收通过（2026-09-18）**，改动留在工作区；真实 provider 连通性待人工验证
 - 上级计划：[README.md](README.md)
+
+## 0. 执行结果与对本计划的四处修正
+
+`@earendil-works/pi-ai@0.85.1` 已接入。build exit 0；`npm test` **core 368/368、desktop 321/321 fail 0**；`npm run pack` 出包成功。
+
+### 修正 1：typebox 是 `1.3.7`，不是 `1.3.27`
+
+计划与[阶段 ③](03-tools-typebox.md) 让锁 `1.3.27`，那是照**本地 pi 仓库 HEAD** 写的。**npm 发布的 `pi-ai@0.85.1` / `pi-agent-core@0.85.1` 精确锁的是 `typebox: 1.3.7`。** 既然走 npm 正式版，core 已降到 `1.3.7`，`npm ls typebox` 全树单一版本。降级无副作用（`Type.Unsafe` / `Type.Integer` / `Type.Optional` / `Static` / `TSchema` 在 1.3.7 均可用）。
+
+> 📌 本地 pi 仓库 HEAD 与 npm 0.85.1 存在漂移（typebox 1.3.27 vs 1.3.7、`@aws-sdk` 3.1127 vs 3.1048、`@google/genai` 2.21 vs 1.52）。**后续阶段照本地 README 读 API 时要留意这一点。**
+
+### 修正 2：④ 与 ⑤ 拆开交付，不合并（推翻 6.8）
+
+6.8 原本说 ④ 单独做会编译不过、建议 ④⑤ 合并。实际做法：**`ModelProvider` 同时保留 `createChatModel`（langchain，喂仍跑 LangGraph 的 `SpotShellAgent`）与新增 `resolveModel`（pi-ai，供 `llmProbe` 用）**。于是：
+
+- `SpotShellAgent.ts` 本阶段**一行未改**
+- `@langchain/openai` / `@langchain/anthropic` **本阶段不删**，顺延到阶段 ⑤
+- ④ build/test 全绿，可独立提交与回滚
+
+代价只是多一个过渡期接口，而 langchain 那条路径本就存在，等于零额外实现量。
+
+### 修正 3：`resolveModel` 是**异步**的
+
+pi-ai 每个 `exports` 子路径**只声明 `import` 条件**（无 `require`/`default`），而 `packages/desktop` 没有 `"type": "module"`，`tsx --test` 以 CJS 模式加载测试。静态 import pi-ai 会让整条 `@spotshell/core` barrel 链路崩掉——实测 desktop 从 319 pass 掉到 **199 pass / 23 个文件整体加载失败**（`ERR_PACKAGE_PATH_NOT_EXPORTED`）。升级 tsx 到 4.23.13 未修复。
+
+故在 `piModel.ts` 与两个 provider 里用 `import()` 按需加载，`resolveModel` 返回 `Promise<ResolvedModel>`。
+
+- **附带收益**：pi-ai 与 TypeBox 全部落入懒加载 chunk，不在主进程启动路径上
+- **附带成本**：阶段 ⑤ 接 `SpotShellAgent` 时，模型解析必须在 async 上下文里做
+- 「缺 API key」仍**同步抛错**，`assert.throws` 语义保留
+
+### 修正 4：`ResolvedModel` 有 4 个字段，不是 2 个
+
+```ts
+{ model, models, requestOptions, providerContextWindow? }
+```
+
+`requestOptions: { apiKey, temperature?, maxTokens? }` —— pi-ai 把凭据与采样参数放在**请求**上而非 model 上。集中在 provider 里翻译一次，并保证显式 `apiKey` 永远压过 pi-ai 的环境变量解析（已写成测试：`OPENAI_API_KEY` 存在时自定义端点的 `getAuth()` 仍返回 `undefined`）。
+
+`providerContextWindow?` —— 4.3 的优先级要求区分「来自 catalog」与「自造 Model」，自造路径上为 `undefined`。
+
+## 0.1 体积实测
+
+| | 阶段 ⓪ 后 | 阶段 ④ 后 | 差 |
+| --- | ---: | ---: | ---: |
+| `out/main/index.js` | 3,020,166 | 3,109,320 | +89,154 |
+| `out/main/chunks/`（新增 16 个） | 0 | 654,920 | +654,920 |
+| **安装包（用户可见）** | 107,389,140 | 109,294,937 | **+1,905,797（+1.82 MiB）** |
+| `app.asar`（安装后占用） | — | 139,893,230 | 未压缩，含未用 SDK |
+
+**`@aws-sdk` / `@google/genai` / `@smithy` / `protobufjs` 在 JS 产物里计数全为 0**，按需 import 生效。`index.js` 的 +89 KB 几乎全是 `openai` SDK 变大（pi-ai 与 langchain 共用，rollup 提升到公共祖先），阶段 ⑤ 删 langchain 后会沉回 chunk。最大 chunk 是 TypeBox 的 Compile/Value（345 KB），因 pi-ai 根入口 `export * from "./utils/validation.ts"` 强制拖入且无独立 `./models` 子路径可绕。
+
+> ⚠️ 但 `@aws-sdk` / `@smithy` / `protobufjs` **仍被 electron-builder 按 dependencies 整棵打进 asar**（实测 asar 内分别有 665 / 752 / 130 条路径）。安装包只涨 1.8 MiB 是因为这些 JS 压缩率高，**但安装后的磁盘占用会实打实变大**。可选缓解：在 `electron-builder.yml` 的 `files` 里加 `!node_modules/@aws-sdk/**` 等排除项（我们从不注册 bedrock/google provider）。不在本阶段范围。
 
 ## 1. 目标
 
