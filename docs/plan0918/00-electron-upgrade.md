@@ -3,8 +3,25 @@
 - 工时：0.5~1 人天
 - 前置：无
 - 可独立交付：✅ 是（与 pi 迁移完全无关，可随时单独合入）
-- 状态：**已决策，执行** —— 用户于 2026-09-18 确认可以升级
+- **状态：已执行并验收通过（2026-09-18）**，改动留在工作区。实测运行时 `node 24.21.0 / electron 44.4.2 / chrome 152.0.7977.130`
 - 上级计划：[README.md](README.md)
+
+## 0. 执行结果摘要
+
+两步都成功，**`electron-vite` 2→5 零配置改动即通过**，`electron.vite.config.ts` 未修改。
+
+| | 升级前 | 升级后 |
+| --- | --- | --- |
+| electron | 33.4.11（Node 20.18.3 / Chromium 130） | **44.4.2（Node 24.21.0 / Chromium 152）** |
+| electron-builder | ^25.1.8 | ^26.15.3 |
+| electron-vite | ^2.3.0 | ^5.0.0 |
+| vite | ^5.4.11 | 不变（electron-vite 5 的 peer 范围已覆盖） |
+| `out/main/index.js` | 3,020,166 B | 3,020,166 B（**字节级相同**） |
+| 安装包 | 约 81 MB | 约 102 MiB（+32%） |
+
+`npm run build` exit 0；`npm test` core 354/354、desktop 319/319 fail 0；`npm run pack` 两个产物齐备。**阶段 ① 建立的 ESM 内联不变量保持**：`unified` / `remark-parse` / `remark-frontmatter` / `mdast-util-to-string` / `strip-ansi` 在 `out/main/index.js` 中 `require()` 计数全为 0，外部化集合仍只有 node builtins + `electron` + `ssh2` + `zod` + `@anthropic-ai/sdk`。
+
+winCodeSign 未再触发符号链接解压失败，electron-builder 26 直接复用了已铺好的缓存。
 
 ## 1. 目标
 
@@ -96,6 +113,8 @@ clipboard  Menu  nativeTheme  safeStorage
 4. **两个产物都要装/跑一遍**，不能只测 portable
 
 > 打包缓存提醒：本机 `winCodeSign-2.6.0` 缓存已手工铺好（`%LOCALAPPDATA%\electron-builder\Cache\winCodeSign\`）。升级 electron-builder 26 后若它要求新版本的 winCodeSign，可能再次触发"符号链接权限不足"的解压失败。届时用同样手法：手工解压并排除 `darwin` 目录，或开启 Windows 开发者模式。
+>
+> 📌 执行时修正：本次**未触发**该问题，electron-builder 26 直接复用了现有缓存。另外 **7za 的路径已失效** —— electron-builder 26 不再提供 `node_modules/7zip-bin/win/x64/7za.exe`，若将来需要手工解压，改用 `node_modules/electron-winstaller/vendor/7z-x64.exe`。
 
 ### 5.2 运行时冒烟
 
@@ -117,6 +136,26 @@ clipboard  Menu  nativeTheme  safeStorage
 ⚠️ 如果这一条失败，用户升级后会丢失全部已保存凭据。**这是本次升级唯一可能造成用户数据损失的点**，不验证不合入。
 
 若确实不兼容，需要补一个迁移路径（旧版本解密 → 新版本重新加密），那会让本阶段工时翻倍。
+
+### 5.3.1 执行时的实测结果：风险已大幅缩小
+
+用同一个 userData 目录做了跨版本对照实验（无 GUI 的最小 Electron app）：
+
+| 步骤 | 结果 |
+| --- | --- |
+| Electron **33.4.11** 加密一段含中文的口令 | 密文 68 字节，`v10` 前缀，OSCrypt 密钥指纹 `faab126f2590fb7b` |
+| Electron **33.4.11** 解密同一密文（对照） | ✅ 成功 |
+| Electron **44.4.2** 解密**同一密文** | ✅ 成功，明文完整还原，密钥指纹**相同** |
+
+机制说明：Windows 上 `safeStorage` 并非每条密文直接调 DPAPI，而是 Chromium OSCrypt 在 userData 的 `Local State` 里存一把受 DPAPI 保护的 AES 密钥（`os_crypt.encrypted_key`），密文带 `v10` 前缀。真正的风险点是"新版本会不会轮换这把密钥"——实测表明不会。
+
+另查 Electron 官方 `breaking-changes.md`：**33 → 44 之间 `safeStorage` 没有任何 breaking change 条目**。
+
+代码侧也确认 `hostsStore.ts` 用的是最朴素的 `isEncryptionAvailable()` + `encryptString()` + `decryptString()` 三件套，无平台特化分支；解密失败被 `catch` 吞掉返回 `undefined`，即**万一不兼容，表现是"凭据静默消失、要求重输"，不是崩溃或数据损坏**。
+
+> ⚠️ 复测提示：若你自己验证时看到解密失败，**先确认不是进程退出方式导致的**。用 `app.exit(0)` 会让密钥来不及刷盘到 `Local State`，两次运行各自生成临时随机密钥，会产生"33 加密、44 解不开"的**假阳性**。要等待刷盘后用 `app.quit()`。
+
+**残余待验**：真机 `%APPDATA%\@spotshell\desktop\settings-secrets.bin`（Electron 33 时代写入的真实密文）能否被 44 解开。该目录下当前没有 `host-credentials.json`，说明这台机器尚未保存过主机凭据。
 
 ## 6. 风险
 
@@ -146,3 +185,21 @@ clipboard  Menu  nativeTheme  safeStorage
 - 运行时 Node 24.21.0，pi 的 `engines` 要求满足，[阶段 ④](04-providers-pi-ai.md) 的硬前置解除
 - 脱离 EOL，重新进入安全更新窗口
 - **功能零变化**，LangGraph 仍在跑
+
+## 9. 升级后新增的两个待办（本阶段不处理）
+
+### 9.1 ⚠️ `safeStorage` 同步 API 在 Electron 45 弃用、46 移除
+
+Electron 官方 breaking-changes：同步的 `isEncryptionAvailable()` / `encryptString()` / `decryptString()` 在 **45 弃用**，**46 随 Chromium 移除同步 OSCrypt 后端一并删除**。
+
+`packages/desktop/src/main/hostsStore.ts` 与 `settingsStore.ts` 用的**正好是这三个**。升到 44 完全安全，但**下一次大版本升级会直接编译不过**。
+
+好消息：官方明确说明旧同步方法加密的数据可以用新异步方法解密，**迁移不涉及数据迁移**。建议单开一个 issue，不要拖到下次升级时才发现。
+
+### 9.2 Electron 44 取消了 npm postinstall 自动下载二进制
+
+`electron@44` 的 package.json **不再有 `scripts` 字段**（已核实：`scripts: undefined`），改为首次 `require('electron')` 时惰性下载，或手动 `node node_modules/electron/install.js`。
+
+影响：**CI 或新同事的干净环境执行 `npm install` 后 `node_modules/electron/dist/` 是空的**，`npm run dev:desktop` 与 `npm run pack` 会在意想不到的时机触发一次上百 MB 的下载，或直接失败。
+
+建议在 `packages/desktop/package.json` 补一个 `postinstall`，或在 README / CI 配置里显式加一步。
