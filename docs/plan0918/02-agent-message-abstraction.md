@@ -3,6 +3,7 @@
 - 工时：1.5~2 人天
 - 前置：[① ESM 迁移](01-esm-migration.md)
 - 可独立交付：✅ 是（不引入 pi 依赖，LangGraph 仍在跑，功能零变化）
+- **状态：已执行并验收通过（2026-09-18）**，改动留在工作区；GUI 冒烟（连 SSH / 换模型 / 重连 / 触发压缩）待人工补
 - 上级计划：[README.md](README.md)
 
 ## 1. 目标
@@ -181,6 +182,14 @@ zod → TypeBox 的转换留到 [阶段 ③](03-tools-typebox.md)。`langchainAd
 | `core/src/context/ContextCompaction.test.ts` | 172 |
 
 **`SpotShellAgent.*.test.ts`（748 行）与 desktop 的 5 个测试本阶段不动** —— 它们通过 `langchainAdapter` 继续工作。重头戏在 [阶段 ⑥](06-test-migration.md)。
+
+> ⚠️ 执行时修正：**"通过 adapter 继续工作"这个假设不成立。** `getHistory()` 改为返回 `AgentMessage[]` 后，测试里的 `String(m.content)` 会得到 `"undefined"`、`HumanMessage.isInstance(m)` 恒为 `false`，`compaction.test.ts` 还直接 import 了被删的 `ensureMessageIds`。
+>
+> 实际额外改了 8 个测试文件，全是机械边界适配，断言与测试结构零变化：
+> - 6 个工具测试：`tool.invoke(x)` → `tool.execute(x)`（`AgentToolDefinition` 的字段名）
+> - `SpotShellAgent.runtime.test.ts` / `compaction.test.ts`：`setHistory([...langchain])` → `setHistory(fromLangchain([...]))`、`String(m.content)` → `m.text`、`HumanMessage.isInstance` → `isUser`。**langchain 假模型全部保留**，阶段 ⑥ 的正餐没被提前吃掉。
+>
+> `SpotShellAgent.dynamicModules.test.ts` 与 desktop 的 5 个测试确实一行未动。
 
 ## 5. 实施步骤
 

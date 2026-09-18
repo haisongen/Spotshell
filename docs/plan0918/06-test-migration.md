@@ -15,6 +15,10 @@
 
 阶段 ② 已完成 `history.test.ts`(86) 与 `ContextCompaction.test.ts`(172)，剩余：
 
+> 📌 阶段 ② 执行时的实际情况：`SpotShellAgent.runtime.test.ts` 与 `compaction.test.ts` 已被**部分**改动（边界适配：`fromLangchain()` 包装、`m.text`、`isUser`），但 **langchain 假模型（`ScriptedToolChatModel` / `FakeListChatModel`）与全部断言均原样保留**。本阶段对这两个文件的工作量不变 —— 要换掉的正是那些假模型。
+
+
+
 ### 2.1 core（527 行）
 
 | 文件 | 行数 | 替身形式 |
