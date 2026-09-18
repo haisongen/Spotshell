@@ -1,7 +1,5 @@
-import { tool } from '@langchain/core/tools';
-import type { StructuredToolInterface } from '@langchain/core/tools';
 import { z } from 'zod';
-import type { SSHExecutor } from './types.js';
+import type { AgentToolDefinition, SSHExecutor } from './types.js';
 import { logger } from '../utils/logger.js';
 import { formatCommandResult } from './format.js';
 import { createKnowledgeTools, type KnowledgeToolAccess } from './knowledgeTools.js';
@@ -12,9 +10,9 @@ type SendCtrlCInput = Record<string, never>;
 type ToolFactory = (
   func: (input: any) => Promise<string>,
   fields: { name: string; description: string; schema: z.ZodTypeAny }
-) => StructuredToolInterface;
+) => AgentToolDefinition;
 
-const makeTool = tool as unknown as ToolFactory;
+const makeTool: ToolFactory = (func, fields) => ({ ...fields, execute: func });
 
 export interface KnowledgeChangeProposalRequest {
   targetKind: 'host-notes' | 'environment' | 'knowledge';
@@ -82,7 +80,7 @@ const MAX_GREP_MATCHES = 500;
 export function createSSHTools(
   executor: SSHExecutor,
   extras: SSHToolExtras = {}
-): StructuredToolInterface[] {
+): AgentToolDefinition[] {
   const executeCommand = makeTool(
     async ({ command }: ExecuteCommandInput): Promise<string> => {
       try {

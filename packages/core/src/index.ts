@@ -45,7 +45,34 @@ export { isDangerousCommand } from './agent/danger.js';
 export { parseCommandLine } from './agent/commandParse.js';
 export type { ParsedCommandLine, CommandSegment } from './agent/commandParse.js';
 export { classifyCommand } from './agent/risk.js';
-export { estimateTokens, trimHistoryToBudget, capToolMessage } from './agent/history.js';
+export {
+  estimateTokens,
+  trimHistoryToBudget,
+  capToolMessage,
+  sanitizeToolCallHistory,
+} from './agent/history.js';
+export {
+  assistantMessage,
+  isAssistant,
+  isSystem,
+  isToolResult,
+  isUser,
+  makeMessageId,
+  messageText,
+  systemMessage,
+  toolResultMessage,
+  userMessage,
+  withMessageId,
+} from './agent/message.js';
+export type {
+  AgentAssistantMessage,
+  AgentMessage,
+  AgentMessageDraft,
+  AgentSystemMessage,
+  AgentToolCall,
+  AgentToolResultMessage,
+  AgentUserMessage,
+} from './agent/message.js';
 export {
   CONTEXT_WINDOW_MAX,
   CONTEXT_WINDOW_MIN,
@@ -66,6 +93,7 @@ export type {
   AgentLanguage,
   AgentHistory,
   AgentRuntime,
+  AgentToolDefinition,
 } from './agent/types.js';
 export {
   assembleModelContext,
@@ -91,7 +119,6 @@ export {
   COMPACTION_SUMMARY_BUDGET_RATIO,
   COMPACTION_TRIGGER_RATIO,
   buildCompactionSummaryRecord,
-  ensureMessageIds,
   estimateMessagesTokens,
   formatCompactionSummariesForContext,
   isEligibleForCompaction,

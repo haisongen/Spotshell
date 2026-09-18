@@ -1,4 +1,5 @@
-import type { BaseMessage } from '@langchain/core/messages';
+import type { z } from 'zod';
+import type { AgentMessage } from './message.js';
 import type { CommandResult } from '../ssh/types.js';
 import type { KnowledgeProvenanceRecord } from '../knowledge/provenance.js';
 import type { ContextAssemblyResult } from '../context/ContextAssembler.js';
@@ -72,7 +73,18 @@ export interface ChatStreamOptions {
   onEvent?: (event: AgentStreamEvent) => void;
 }
 
-export type AgentHistory = BaseMessage[];
+export type AgentHistory = AgentMessage[];
+
+/**
+ * Framework-neutral tool contract consumed by the agent runtime.
+ * The schema is still zod at this stage; the adapter converts it for LangGraph.
+ */
+export interface AgentToolDefinition<TInput = any> {
+  name: string;
+  description: string;
+  schema: z.ZodTypeAny;
+  execute: (input: TInput) => Promise<string>;
+}
 
 export interface AgentRuntime {
   chatStream(

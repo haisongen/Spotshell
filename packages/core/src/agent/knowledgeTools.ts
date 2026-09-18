@@ -1,6 +1,5 @@
-import { tool } from '@langchain/core/tools';
-import type { StructuredToolInterface } from '@langchain/core/tools';
 import { z } from 'zod';
+import type { AgentToolDefinition } from './types.js';
 import type {
   DynamicModuleSelection,
   KnowledgeHarness,
@@ -11,9 +10,9 @@ import { logger } from '../utils/logger.js';
 type ToolFactory = (
   func: (input: any) => Promise<string>,
   fields: { name: string; description: string; schema: z.ZodTypeAny }
-) => StructuredToolInterface;
+) => AgentToolDefinition;
 
-const makeTool = tool as unknown as ToolFactory;
+const makeTool: ToolFactory = (func, fields) => ({ ...fields, execute: func });
 
 const objectIdSchema = z.string().uuid().describe('Knowledge object stable ID');
 const revisionSchema = z.number().int().positive().describe('Active object revision number');
@@ -44,7 +43,7 @@ function formatError(error: unknown): string {
 }
 
 /** Read-only, authorization-aware knowledge tools. No SSH, write, or network. */
-export function createKnowledgeTools(access: KnowledgeToolAccess): StructuredToolInterface[] {
+export function createKnowledgeTools(access: KnowledgeToolAccess): AgentToolDefinition[] {
   const listCatalog = makeTool(
     async (): Promise<string> => {
       try {

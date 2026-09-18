@@ -4,12 +4,11 @@
  */
 
 import {
-  AIMessage,
-  BaseMessage,
-  HumanMessage,
-  SystemMessage,
-  ToolMessage,
-} from '@langchain/core/messages';
+  isSystem,
+  isUser,
+  messageText,
+  type AgentMessage,
+} from '../agent/message.js';
 import { estimateTokens } from '../agent/history.js';
 import { estimateTextTokens } from './ContextAssembler.js';
 
@@ -47,8 +46,8 @@ export type CompactionPlan =
   | { action: 'hint_over_limit'; reason: CompactionOverLimitReason }
   | {
       action: 'compact';
-      toCompact: BaseMessage[];
-      retain: BaseMessage[];
+      toCompact: AgentMessage[];
+      retain: AgentMessage[];
       remainingSummaryBudget: number;
     };
 
@@ -57,7 +56,7 @@ export interface PlanContextCompactionInput {
   usedInputTokens: number;
   availableInputBudget: number;
   chatBudgetTokens: number;
-  history: readonly BaseMessage[];
+  history: readonly AgentMessage[];
   existingSummaries: readonly CompactionSummaryRecord[];
 }
 
@@ -87,15 +86,7 @@ export function isOverCompactionTrigger(input: {
   return false;
 }
 
-export function ensureMessageIds(messages: readonly BaseMessage[]): BaseMessage[] {
-  return messages.map((message, index) => {
-    if (message.id) return message;
-    const id = `hist-${index}-${simpleHash(messageContent(message))}`;
-    return messageWithId(message, id);
-  });
-}
-
-export function estimateMessagesTokens(messages: readonly BaseMessage[]): number {
+export function estimateMessagesTokens(messages: readonly AgentMessage[]): number {
   return messages.reduce((sum, message) => sum + estimateTokens(message), 0);
 }
 
@@ -104,7 +95,7 @@ export function estimateMessagesTokens(messages: readonly BaseMessage[]): number
  * Never mutates inputs. Does not generate summary text.
  */
 export function planContextCompaction(input: PlanContextCompactionInput): CompactionPlan {
-  const history = ensureMessageIds(input.history);
+  const history = input.history;
   const historyTokens = estimateMessagesTokens(history);
   const over = isOverCompactionTrigger({
     usedInputTokens: input.usedInputTokens,
@@ -141,12 +132,12 @@ export function planContextCompaction(input: PlanContextCompactionInput): Compac
 }
 
 /**
- * Older eligible human/AI/tool messages vs recent verbatim tail.
- * System messages and anything already treated as a summary stay out of toCompact.
+ * Older eligible user/assistant/tool messages vs recent verbatim tail.
+ * System messages stay out of toCompact.
  */
-export function splitEligibleCompactionWindow(history: readonly BaseMessage[]): {
-  toCompact: BaseMessage[];
-  retain: BaseMessage[];
+export function splitEligibleCompactionWindow(history: readonly AgentMessage[]): {
+  toCompact: AgentMessage[];
+  retain: AgentMessage[];
 } {
   const { preamble, groups } = groupByHumanTurns(history);
   if (groups.length <= RECENT_TAIL_MIN_TURN_GROUPS) {
@@ -183,24 +174,18 @@ export function splitEligibleCompactionWindow(history: readonly BaseMessage[]): 
   };
 }
 
-export function isEligibleForCompaction(message: BaseMessage): boolean {
-  if (SystemMessage.isInstance(message)) return false;
-  if (isCompactionSummaryMessage(message)) return false;
-  return (
-    HumanMessage.isInstance(message)
-    || AIMessage.isInstance(message)
-    || ToolMessage.isInstance(message)
-  );
-}
-
-export function isCompactionSummaryMessage(message: BaseMessage): boolean {
-  const kwargs = message.additional_kwargs as Record<string, unknown> | undefined;
-  return kwargs?.['spotshellCompaction'] === true;
+/**
+ * Compaction summaries are never messages: they live in the agent's independent
+ * `compactionSummaries` array and reach the model through a system context
+ * message, so only the system role has to be excluded here (ADR-046 / ADR-047).
+ */
+export function isEligibleForCompaction(message: AgentMessage): boolean {
+  return !isSystem(message);
 }
 
 export function buildCompactionSummaryRecord(input: {
   text: string;
-  coveredMessages: readonly BaseMessage[];
+  coveredMessages: readonly AgentMessage[];
   model: string;
   createdAt?: string;
   id?: string;
@@ -241,19 +226,19 @@ export function formatCompactionSummariesForContext(
 }
 
 /**
- * Split history into leading non-human preamble (always retained) and
- * human-turn groups. Only HumanMessage starts a compactable group so a lone
- * SystemMessage cannot starve eligible turns.
+ * Split history into a leading non-user preamble (always retained) and
+ * user-turn groups. Only a user message starts a compactable group so a lone
+ * system message cannot starve eligible turns.
  */
-function groupByHumanTurns(messages: readonly BaseMessage[]): {
-  preamble: BaseMessage[];
-  groups: BaseMessage[][];
+function groupByHumanTurns(messages: readonly AgentMessage[]): {
+  preamble: AgentMessage[];
+  groups: AgentMessage[][];
 } {
-  const preamble: BaseMessage[] = [];
-  const groups: BaseMessage[][] = [];
-  let current: BaseMessage[] | null = null;
+  const preamble: AgentMessage[] = [];
+  const groups: AgentMessage[][] = [];
+  let current: AgentMessage[] | null = null;
   for (const message of messages) {
-    if (HumanMessage.isInstance(message)) {
+    if (isUser(message)) {
       if (current) groups.push(current);
       current = [message];
       continue;
@@ -268,61 +253,11 @@ function groupByHumanTurns(messages: readonly BaseMessage[]): {
   return { preamble, groups };
 }
 
-function messageContent(message: BaseMessage): string {
-  return typeof message.content === 'string'
-    ? message.content
-    : JSON.stringify(message.content);
-}
-
-function previewContent(message: BaseMessage | undefined): string {
+function previewContent(message: AgentMessage | undefined): string {
   if (!message) return '';
-  const raw = messageContent(message).replace(/\s+/g, ' ').trim();
+  const raw = messageText(message).replace(/\s+/g, ' ').trim();
   if (raw.length <= 80) return raw;
   return `${raw.slice(0, 77)}...`;
-}
-
-function messageWithId(message: BaseMessage, id: string): BaseMessage {
-  if (HumanMessage.isInstance(message)) {
-    return new HumanMessage({
-      content: message.content,
-      id,
-      additional_kwargs: message.additional_kwargs,
-      response_metadata: message.response_metadata,
-      name: message.name,
-    });
-  }
-  if (AIMessage.isInstance(message)) {
-    return new AIMessage({
-      content: message.content,
-      id,
-      tool_calls: message.tool_calls,
-      additional_kwargs: message.additional_kwargs,
-      response_metadata: message.response_metadata,
-      name: message.name,
-    });
-  }
-  if (ToolMessage.isInstance(message)) {
-    return new ToolMessage({
-      content: message.content,
-      tool_call_id: message.tool_call_id,
-      id,
-      name: message.name,
-      status: message.status,
-      artifact: message.artifact,
-      additional_kwargs: message.additional_kwargs,
-      response_metadata: message.response_metadata,
-    });
-  }
-  if (SystemMessage.isInstance(message)) {
-    return new SystemMessage({
-      content: message.content,
-      id,
-      additional_kwargs: message.additional_kwargs,
-      response_metadata: message.response_metadata,
-      name: message.name,
-    });
-  }
-  return message;
 }
 
 function simpleHash(text: string): string {

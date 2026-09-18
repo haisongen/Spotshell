@@ -1,5 +1,5 @@
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { HumanMessage, AIMessage, SystemMessage, BaseMessage, ToolMessage } from '@langchain/core/messages';
+import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from '@langchain/core/messages';
 import { StateGraph, MessagesAnnotation, START, END } from '@langchain/langgraph';
 import type { CompiledStateGraph } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
@@ -14,6 +14,19 @@ import type {
 } from './types.js';
 import { createSSHTools, type SSHToolExtras } from './tools.js';
 import { capToolMessage, sanitizeToolCallHistory, trimHistoryToBudget } from './history.js';
+import {
+  isToolResult,
+  messageText,
+  systemMessage,
+  userMessage,
+  type AgentMessage,
+} from './message.js';
+import {
+  fromLangchain,
+  sanitizeLangchainHistory,
+  toLangchain,
+  toLangchainTools,
+} from './langchainAdapter.js';
 import { buildSystemPrompt, buildContextMessage } from './prompt.js';
 import { resolveContextWindow } from './modelContext.js';
 import {
@@ -23,7 +36,6 @@ import {
 } from '../context/ContextAssembler.js';
 import {
   buildCompactionSummaryRecord,
-  ensureMessageIds,
   formatCompactionSummariesForContext,
   planContextCompaction,
   type CompactionSummaryRecord,
@@ -36,7 +48,7 @@ import type { ModelProvider, ModelProviderConfig, ModelProviderId } from './prov
 const TOOLS_SCHEMA_RESERVE_CHARS = 3_000;
 
 export type ContextCompactionSummarizer = (input: {
-  messages: BaseMessage[];
+  messages: AgentMessage[];
   modelName: string;
   language: AgentLanguage;
 }) => Promise<string>;
@@ -61,7 +73,7 @@ export class SpotShellAgent implements AgentRuntime {
   private tools: ReturnType<typeof createSSHTools>;
   private graph: CompiledStateGraph<any, any, any> | null = null;
   private recursionLimit?: number;
-  private conversationHistory: BaseMessage[] = [];
+  private conversationHistory: AgentMessage[] = [];
   /** Independent one-shot summaries; never re-fed into a later summary. */
   private compactionSummaries: CompactionSummaryRecord[] = [];
   private readonly language: AgentLanguage;
@@ -179,11 +191,12 @@ export class SpotShellAgent implements AgentRuntime {
     if (!this.model.bindTools) {
       throw new Error('Agent model must support tool binding');
     }
-    const modelWithTools = this.model.bindTools(this.tools);
+    const langchainTools = toLangchainTools(this.tools);
+    const modelWithTools = this.model.bindTools(langchainTools);
 
     // 定义 agent 节点
     const callModel = async (state: typeof MessagesAnnotation.State) => {
-      const response = await modelWithTools.invoke(sanitizeToolCallHistory(state.messages));
+      const response = await modelWithTools.invoke(sanitizeLangchainHistory(state.messages));
       return { messages: [response] };
     };
 
@@ -200,7 +213,7 @@ export class SpotShellAgent implements AgentRuntime {
     };
 
     // 构建图
-    const toolNode = new ToolNode(this.tools);
+    const toolNode = new ToolNode(langchainTools);
 
     const workflow = new StateGraph(MessagesAnnotation as any) as StateGraph<any, any, any>;
 
@@ -220,9 +233,7 @@ export class SpotShellAgent implements AgentRuntime {
     opts: ChatStreamOptions = {}
   ): Promise<string> {
     const graph = this.graph ?? (this.graph = this.buildGraph());
-    this.conversationHistory = ensureMessageIds(
-      sanitizeToolCallHistory(this.conversationHistory),
-    );
+    this.conversationHistory = sanitizeToolCallHistory(this.conversationHistory);
 
     // Optionally compact older eligible history before the live turn.
     await this.maybeCompactHistory(userInput, context, opts.onEvent);
@@ -235,16 +246,19 @@ export class SpotShellAgent implements AgentRuntime {
     const historyBudget = Math.max(0, assembly.chatBudgetTokens);
     const fullHistory = this.conversationHistory;
     const history = trimHistoryToBudget(fullHistory, historyBudget);
-    const baseline: BaseMessage[] = [
-      new SystemMessage(this.systemPrompt),
-      new SystemMessage(contextMessage),
+    const turnUserMessage = userMessage(userInput);
+    const baseline: AgentMessage[] = [
+      systemMessage(this.systemPrompt),
+      systemMessage(contextMessage),
       ...history,
-      new HumanMessage(userInput),
+      turnUserMessage,
     ];
+    // Single crossing into the LangGraph runtime; everything above is framework neutral.
+    const baselineMessages = toLangchain(baseline);
 
     try {
       const stream = await graph.stream(
-        { messages: baseline },
+        { messages: baselineMessages },
         {
           streamMode: ['values', 'messages'],
           signal: opts.signal,
@@ -266,7 +280,7 @@ export class SpotShellAgent implements AgentRuntime {
         }
       }
 
-      const finalMessages = lastValues?.messages ?? baseline;
+      const finalMessages = lastValues?.messages ?? baselineMessages;
       const lastMessage = finalMessages[finalMessages.length - 1];
       let responseText = '';
       if (lastMessage && AIMessage.isInstance(lastMessage)) {
@@ -275,17 +289,16 @@ export class SpotShellAgent implements AgentRuntime {
           : JSON.stringify(lastMessage.content);
       }
 
-      const newMessages = finalMessages.slice(baseline.length).map((message) =>
-        ToolMessage.isInstance(message) ? capToolMessage(message, 2000) : message
-      );
+      const newMessages = fromLangchain(finalMessages.slice(baselineMessages.length))
+        .map((message) => (isToolResult(message) ? capToolMessage(message, 2000) : message));
       // Persist the full active Agent history. Intentional reduction is only via
       // one-shot compaction (or clearHistory / new context). Soft-trim above is
       // outbound-only so we never silently drop unsummarized messages.
-      this.conversationHistory = ensureMessageIds(sanitizeToolCallHistory([
+      this.conversationHistory = sanitizeToolCallHistory([
         ...fullHistory,
-        new HumanMessage(userInput),
+        turnUserMessage,
         ...newMessages,
-      ]));
+      ]);
       const provenance = this.collectProvenance();
       opts.onEvent?.({
         type: 'final',
@@ -349,7 +362,7 @@ export class SpotShellAgent implements AgentRuntime {
         return;
       }
       // Apply only after a non-empty summary that fits the shared summary budget.
-      this.conversationHistory = ensureMessageIds(plan.retain);
+      this.conversationHistory = [...plan.retain];
       this.compactionSummaries = [...this.compactionSummaries, record];
       onEvent?.({ type: 'context_compaction', summary: { ...record } });
     } catch (error) {
@@ -360,14 +373,7 @@ export class SpotShellAgent implements AgentRuntime {
   }
 
   private assembleForTurn(userInput: string, context: AgentContext): ContextAssemblyResult {
-    const chatText = this.conversationHistory
-      .map((message) => {
-        const content = typeof message.content === 'string'
-          ? message.content
-          : JSON.stringify(message.content);
-        return content;
-      })
-      .join('\n');
+    const chatText = this.conversationHistory.map(messageText).join('\n');
     const toolEstimate = [
       this.tools.map((tool) => tool.name).join(','),
       'x'.repeat(TOOLS_SCHEMA_RESERVE_CHARS),
@@ -477,12 +483,12 @@ export class SpotShellAgent implements AgentRuntime {
     return this.chatStream(userInput, context);
   }
 
-  getHistory(): BaseMessage[] {
+  getHistory(): AgentMessage[] {
     return [...this.conversationHistory];
   }
 
-  setHistory(messages: BaseMessage[]): void {
-    this.conversationHistory = ensureMessageIds(sanitizeToolCallHistory(messages));
+  setHistory(messages: readonly AgentMessage[]): void {
+    this.conversationHistory = sanitizeToolCallHistory(messages);
   }
 
   clearHistory(): void {
@@ -514,23 +520,14 @@ export class SpotShellAgent implements AgentRuntime {
 async function defaultCompactionSummarizer(
   model: BaseChatModel,
   input: {
-    messages: BaseMessage[];
+    messages: AgentMessage[];
     modelName: string;
     language: AgentLanguage;
   },
 ): Promise<string> {
   const transcript = input.messages.map((message) => {
-    const role = HumanMessage.isInstance(message)
-      ? 'user'
-      : AIMessage.isInstance(message)
-        ? 'assistant'
-        : ToolMessage.isInstance(message)
-          ? 'tool'
-          : 'other';
-    const content = typeof message.content === 'string'
-      ? message.content
-      : JSON.stringify(message.content);
-    return `${role}: ${content}`;
+    const role = message.role === 'toolResult' ? 'tool' : message.role;
+    return `${role}: ${messageText(message)}`;
   }).join('\n\n');
 
   const instruction = input.language === 'en'
