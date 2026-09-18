@@ -1,6 +1,6 @@
 appId: com.spotshell.app
 productName: SpotShell
-electronVersion: 33.4.11
+electronVersion: 44.4.2
 directories:
   output: release
 files:
