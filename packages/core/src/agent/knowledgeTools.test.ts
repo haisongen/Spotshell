@@ -129,6 +129,43 @@ describe('createKnowledgeTools', () => {
     assert.match(String(unauthorized), /not authorized|not selected|失败/);
   });
 
+  it('rejects a malformed objectId with a readable message instead of reaching the harness', async (t) => {
+    const harness = createTempHarness(t);
+    for (const toolName of [
+      'read_knowledge_entry',
+      'list_knowledge_files',
+      'search_knowledge_text',
+      'read_knowledge_lines',
+      'select_knowledge_module',
+    ]) {
+      const result = await getTool(harness, toolName).execute({
+        objectId: 'not-a-uuid',
+        revision: 1,
+        reason: 'r',
+        pattern: 'p',
+        relativePath: 'SPACE.md',
+        startLine: 1,
+      });
+      assert.match(String(result), /UUID/, `${toolName} should report a bad objectId`);
+    }
+    assert.equal(harness.takeProvenance().length, 0);
+  });
+
+  it('accepts the nil UUID and any version digit, matching the previous zod check', async (t) => {
+    const harness = createTempHarness(t);
+    for (const objectId of [
+      '00000000-0000-0000-0000-000000000000',
+      'aaaaaaaa-aaaa-9aaa-caaa-aaaaaaaaaaaa',
+    ]) {
+      const result = await getTool(harness, 'read_knowledge_entry').execute({
+        objectId,
+        revision: 1,
+      });
+      // Well-formed but unknown ids fail downstream, never on the format guard.
+      assert.doesNotMatch(String(result), /UUID/);
+    }
+  });
+
   it('select_knowledge_module activates an authorized candidate and notifies the host', async (t) => {
     const rootPath = temporaryDirectory(t, 'spotshell-select-tool-');
     fs.writeFileSync(path.join(rootPath, 'SPACE.md'), CANDIDATE_SPACE, 'utf8');

@@ -3,7 +3,22 @@
 - 工时：1 人天
 - 前置：[② 消息/工具抽象层](02-agent-message-abstraction.md)
 - 可并行：与 [④ Provider 迁移](04-providers-pi-ai.md) 无依赖，可同时进行
+- **状态：已执行并验收通过（2026-09-18）**，改动留在工作区；真实 provider 逐工具调用待人工验证
 - 上级计划：[README.md](README.md)
+
+## 0. 执行结果摘要
+
+`typebox@1.3.27`（精确锁定，与 pi 对齐）。schema dump 前后对比（走真实链路 `createSSHTools → toLangchainTools → convertToOpenAITool`）：**14 个工具无增减，共 37 处字段差异，全部落在 3 类可接受项**：
+
+| 差异 | 处数 | 判定 |
+| --- | --- | --- |
+| `$schema: "…draft-07…"` 被丢弃 | 14 | zod-to-json-schema 的产物元数据，provider 不读，净减噪音 |
+| `format:"uuid"` → `minLength/maxLength: 36` | 15 | 有意为之（见 6.3 B），校验搬进工具体 |
+| `exclusiveMinimum: 0` → `minimum: 1` | 8 | `type:"integer"` 下数学等价 |
+
+**零差异项**：全部 `description`（工具级与字段级）逐字相同、`required` 数组连顺序都一致、`enum` 表示形式一致（`{"type":"string","enum":[…]}`，未退化成 `anyOf`+`const`）、嵌套结构（`propose_knowledge_change.files` / `ask_knowledge_target.candidates`）逐字节相同、空 schema（`send_ctrl_c` / `list_knowledge_catalog`）逐字节相同、`additionalProperties: false` 全部保持。
+
+5.4 的"省事路线"成立：`toLangchainTools()` 把 TypeBox schema 当 JSON Schema 直接交给 langchain 的 `tool()`，**没有写 TypeBox→zod 转换器**，入参校验完整保留（实跑验证：缺必填 / 类型错 / 多余字段 / minLength / maxLength / enum 非法 / maximum 越界 / 嵌套元素缺字段，全部被拒）。
 
 ## 1. 目标
 
