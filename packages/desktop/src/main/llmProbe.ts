@@ -40,7 +40,7 @@ export async function testLlmConnection(
   let timedOut = false
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const chatModel = provider.createChatModel({
+    const resolved = await provider.resolveModel({
       provider: draft.provider,
       apiKey,
       model,
@@ -55,8 +55,30 @@ export async function testLlmConnection(
         reject(new Error('Model provider probe timed out'))
       }, timeoutMs)
     })
-    await Promise.race([chatModel.invoke('ping', { signal: abort.signal }), timeout])
+    // pi-ai reports request failures on the returned message instead of
+    // throwing, so the timeout race still guards against an implementation that
+    // ignores the abort signal.
+    const assistant = await Promise.race([
+      resolved.models.complete(
+        resolved.model,
+        { messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }] },
+        { ...resolved.requestOptions, signal: abort.signal },
+      ),
+      timeout,
+    ])
     const latencyMs = now() - started
+    if (assistant.stopReason === 'error' || assistant.stopReason === 'aborted') {
+      const normalized = provider.normalizeAssistantFailure(assistant)
+      return {
+        ok: false,
+        provider: draft.provider,
+        message: normalized.message,
+        model,
+        latencyMs,
+        statusCode: normalized.statusCode,
+        errorKind: normalized.kind,
+      }
+    }
     return {
       ok: true,
       provider: draft.provider,

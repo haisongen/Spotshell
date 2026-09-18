@@ -52,12 +52,25 @@ export function normalizeContextWindow(value: unknown): number | undefined {
   return value;
 }
 
+/**
+ * Priority:
+ * 1. the value the user configured explicitly,
+ * 2. the context window the provider catalog reports for the model,
+ * 3. the local prefill table (the only source on a custom base URL),
+ * 4. `DEFAULT_CONTEXT_WINDOW`.
+ *
+ * Every candidate passes the same `CONTEXT_WINDOW_MIN`/`MAX` validation, so an
+ * out-of-range provider value falls through instead of being trusted.
+ */
 export function resolveContextWindow(options: {
   contextWindowTokens?: number;
   model?: string;
+  providerContextWindow?: number;
 }): number {
   const explicit = normalizeContextWindow(options.contextWindowTokens);
   if (explicit !== undefined) return explicit;
+  const fromProvider = normalizeContextWindow(options.providerContextWindow);
+  if (fromProvider !== undefined) return fromProvider;
   return lookupKnownModelContextWindow(options.model) ?? DEFAULT_CONTEXT_WINDOW;
 }
 

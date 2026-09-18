@@ -26,7 +26,13 @@ export type {
   ModelProviderErrorInfo,
   ModelProviderErrorKind,
   ModelProviderId,
+  ResolvedModel,
+  ResolvedModelRequestOptions,
 } from './agent/providers/types.js';
+export {
+  normalizeAssistantFailure,
+  normalizeProviderError,
+} from './agent/providers/errorNormalization.js';
 export type {
   SpotShellAgentDependencies,
   ContextCompactionSummarizer,
