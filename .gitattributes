@@ -1,0 +1,7 @@
+# 测试 fixture 的字节内容参与内容哈希计算与字面量匹配，必须锁定为 LF。
+# 否则在 core.autocrlf=true 的 Windows 上检出为 CRLF，会导致：
+#   - spaceDocument.test.ts 的 .replace('...\n', '') 静默变成空操作，
+#     构造不出非法输入，assert.throws 拿不到预期异常
+#   - spaceObject.test.ts 的行尾归一化用例把已是 CRLF 的内容再转一次，
+#     产生 \r\r\n，内容哈希不再稳定
+**/fixtures/** text eol=lf
