@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import type { TSchema } from 'typebox';
 import type { AgentMessage } from './message.js';
 import type { CommandResult } from '../ssh/types.js';
 import type { KnowledgeProvenanceRecord } from '../knowledge/provenance.js';
@@ -77,12 +77,13 @@ export type AgentHistory = AgentMessage[];
 
 /**
  * Framework-neutral tool contract consumed by the agent runtime.
- * The schema is still zod at this stage; the adapter converts it for LangGraph.
+ * `schema` is a TypeBox schema, i.e. plain JSON Schema: the adapter hands it to
+ * LangGraph as-is, and a future pi runtime can consume it unchanged.
  */
 export interface AgentToolDefinition<TInput = any> {
   name: string;
   description: string;
-  schema: z.ZodTypeAny;
+  schema: TSchema;
   execute: (input: TInput) => Promise<string>;
 }
 

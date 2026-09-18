@@ -16,7 +16,7 @@ import {
 } from '@langchain/core/messages';
 import { tool } from '@langchain/core/tools';
 import type { StructuredToolInterface } from '@langchain/core/tools';
-import type { z } from 'zod';
+import type { TSchema } from 'typebox';
 import {
   withMessageId,
   type AgentMessage,
@@ -111,11 +111,17 @@ export function sanitizeLangchainHistory(messages: readonly BaseMessage[]): Base
 
 type ToolFactory = (
   func: (input: any) => Promise<string>,
-  fields: { name: string; description: string; schema: z.ZodTypeAny },
+  fields: { name: string; description: string; schema: TSchema },
 ) => StructuredToolInterface;
 
 const makeLangchainTool = tool as unknown as ToolFactory;
 
+/**
+ * TypeBox schemas are handed to `tool()` as plain JSON Schema — langchain-core
+ * accepts either a zod schema or a JSON Schema and validates the latter with
+ * `@cfworker/json-schema` before invoking, so argument validation is preserved
+ * without a TypeBox -> zod converter that would only live for one milestone.
+ */
 export function toLangchainTools(
   definitions: readonly AgentToolDefinition[],
 ): StructuredToolInterface[] {
