@@ -10,6 +10,7 @@ release/
 docs/*
 !docs/pushGithub/
 !docs/pushGithub/README.md
+!docs/plan0918/
 # Environment files
 .env
 .env.local
