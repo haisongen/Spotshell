@@ -1,5 +1,5 @@
 import type { ClientChannel } from 'ssh2';
-import { TextDecoder } from 'util';
+import { TextDecoder } from 'node:util';
 import {
   TerminalMode,
   TerminalSize,

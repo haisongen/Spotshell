@@ -7,7 +7,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ['@spotshell/core'] })],
     build: {
       commonjsOptions: {
-        include: [/node_modules/, /packages[\\/]core[\\/]dist/],
+        include: [/node_modules/],
       },
       rollupOptions: {
         external: [/^@anthropic-ai\/sdk(?:\/|$)/],

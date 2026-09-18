@@ -1,15 +1,4 @@
-// 动态导入 strip-ansi (ESM 模块)
-let stripAnsi: (text: string) => string;
-
-async function loadStripAnsi(): Promise<void> {
-  if (!stripAnsi) {
-    const module = await import('strip-ansi');
-    stripAnsi = module.default;
-  }
-}
-
-// 初始化时加载
-loadStripAnsi();
+import stripAnsi from 'strip-ansi';
 
 export interface ContextBufferOptions {
   maxSize?: number;  // 最大字符数
@@ -28,13 +17,10 @@ export class ContextBuffer {
   }
 
   async append(data: Buffer | string): Promise<void> {
-    // 确保 stripAnsi 已加载
-    await loadStripAnsi();
-
     const text = typeof data === 'string' ? data : data.toString('utf-8');
 
     // 清除 ANSI 转义码
-    const cleanText = stripAnsi ? stripAnsi(text) : text;
+    const cleanText = stripAnsi(text);
 
     // 按行分割
     const lines = cleanText.split(/\r?\n/);

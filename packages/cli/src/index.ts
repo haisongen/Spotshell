@@ -3,9 +3,9 @@
 import 'dotenv/config';
 import { program } from 'commander';
 import inquirer from 'inquirer';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import type { ClientChannel } from 'ssh2';
 import {
   SSHClient,
