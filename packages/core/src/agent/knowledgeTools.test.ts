@@ -88,7 +88,7 @@ describe('createKnowledgeTools', () => {
 
   it('list_knowledge_catalog returns readable objects and candidate metadata', async (t) => {
     const harness = createTempHarness(t);
-    const result = await getTool(harness, 'list_knowledge_catalog').invoke({});
+    const result = await getTool(harness, 'list_knowledge_catalog').execute({});
     const parsed = JSON.parse(String(result)) as {
       readable: Array<{ id: string; revision: number }>;
       candidates: Array<{ id: string }>;
@@ -100,7 +100,7 @@ describe('createKnowledgeTools', () => {
 
   it('read_knowledge_entry returns content with provenance and records it on the harness', async (t) => {
     const harness = createTempHarness(t);
-    const result = await getTool(harness, 'read_knowledge_entry').invoke({
+    const result = await getTool(harness, 'read_knowledge_entry').execute({
       objectId: OBJECT_ID,
       revision: 1,
     });
@@ -115,14 +115,14 @@ describe('createKnowledgeTools', () => {
   });
 
   it('rejects missing harness and unauthorized object ids without throwing', async () => {
-    const missing = await getTool(undefined, 'read_knowledge_entry').invoke({
+    const missing = await getTool(undefined, 'read_knowledge_entry').execute({
       objectId: OBJECT_ID,
       revision: 1,
     });
     assert.match(String(missing), /No personal knowledge|知识/);
 
     const harness = new KnowledgeHarness({ objects: [] });
-    const unauthorized = await getTool(harness, 'read_knowledge_entry').invoke({
+    const unauthorized = await getTool(harness, 'read_knowledge_entry').execute({
       objectId: OBJECT_ID,
       revision: 1,
     });
@@ -162,7 +162,7 @@ describe('createKnowledgeTools', () => {
     const tool = tools.find((candidate) => candidate.name === 'select_knowledge_module');
     assert.ok(tool);
 
-    const result = await tool.invoke({
+    const result = await tool.execute({
       objectId: CANDIDATE_ID,
       reason: 'User asked about heap pressure',
     });
@@ -190,7 +190,7 @@ describe('createKnowledgeTools', () => {
     });
     const tool = tools.find((candidate) => candidate.name === 'select_knowledge_module');
     assert.ok(tool);
-    const result = await tool.invoke({
+    const result = await tool.execute({
       objectId: CANDIDATE_ID,
       reason: 'should fail',
     });

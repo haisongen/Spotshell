@@ -24,7 +24,7 @@ describe('propose_host_note tool', () => {
     })
     const tool = tools.find((t) => t.name === 'propose_host_note')
     assert.ok(tool)
-    const result = await tool!.invoke({ note: 'GSS 报错无害' })
+    const result = await tool!.execute({ note: 'GSS 报错无害' })
     assert.equal(result, '已保存到主机档案')
     assert.deepEqual(received, ['GSS 报错无害'])
   })
@@ -34,7 +34,7 @@ describe('propose_host_note tool', () => {
       proposeHostNote: async () => { throw new Error('boom') },
     })
     const tool = tools.find((t) => t.name === 'propose_host_note')!
-    const result = await tool.invoke({ note: 'n' })
+    const result = await tool.execute({ note: 'n' })
     assert.match(String(result), /boom/)
   })
 })

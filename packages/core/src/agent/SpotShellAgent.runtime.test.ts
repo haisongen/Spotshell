@@ -7,6 +7,8 @@ import { FakeListChatModel } from '@langchain/core/utils/testing';
 import { SpotShellAgent } from './SpotShellAgent.js';
 import type { SSHExecutor } from './types.js';
 import type { ModelProvider, ModelProviderId } from './providers/types.js';
+import { fromLangchain } from './langchainAdapter.js';
+import { isUser } from './message.js';
 
 class ScriptedToolChatModel extends BaseChatModel {
   readonly receivedMessages: BaseMessage[][] = [];
@@ -117,7 +119,7 @@ test('repairs an incomplete persisted tool batch before the next model request',
     undefined,
     { model }
   );
-  agent.setHistory([
+  agent.setHistory(fromLangchain([
     new HumanMessage('old request'),
     new AIMessage({
       content: '',
@@ -127,7 +129,7 @@ test('repairs an incomplete persisted tool batch before the next model request',
       ],
     }),
     new ToolMessage({ tool_call_id: 'old-1', content: 'partial result' }),
-  ]);
+  ]));
 
   const reply = await agent.chat('continue', { terminalHistory: '' });
 
@@ -155,7 +157,7 @@ test('updateModel switches provider on the next turn and preserves history', asy
   assert.equal(await agent.chat('first', { terminalHistory: '' }), 'old reply');
   agent.updateModel({ provider: 'anthropic', apiKey: 'new-key' });
   assert.equal(await agent.chat('second', { terminalHistory: '' }), 'new reply');
-  assert.equal(agent.getHistory().filter((message) => HumanMessage.isInstance(message)).length, 2);
+  assert.equal(agent.getHistory().filter(isUser).length, 2);
 });
 
 test('updateModel keeps the current model and metadata when creation fails', async () => {

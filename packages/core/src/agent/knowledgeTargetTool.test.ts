@@ -32,7 +32,7 @@ describe('ask_knowledge_target tool', () => {
     });
     const tool = tools.find((t) => t.name === 'ask_knowledge_target');
     assert.ok(tool);
-    const result = await tool!.invoke(question);
+    const result = await tool!.execute(question);
     assert.match(String(result), /targetId=env-1/);
     assert.equal(received.length, 1);
     assert.deepEqual(received[0]?.candidates, question.candidates);
@@ -43,6 +43,6 @@ describe('ask_knowledge_target tool', () => {
       askKnowledgeTarget: async () => { throw new Error('boom'); },
     });
     const tool = tools.find((t) => t.name === 'ask_knowledge_target')!;
-    assert.match(String(await tool.invoke(question)), /boom/);
+    assert.match(String(await tool.execute(question)), /boom/);
   });
 });

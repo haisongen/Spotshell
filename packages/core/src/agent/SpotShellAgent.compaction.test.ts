@@ -5,7 +5,7 @@ import { FakeListChatModel } from '@langchain/core/utils/testing';
 import { SpotShellAgent } from './SpotShellAgent.js';
 import type { AgentStreamEvent, SSHExecutor } from './types.js';
 import type { ModelProvider } from './providers/types.js';
-import { ensureMessageIds } from '../context/ContextCompaction.js';
+import { fromLangchain } from './langchainAdapter.js';
 
 class FakeSshExecutor implements SSHExecutor {
   async execute(command: string) {
@@ -58,7 +58,7 @@ test('auto compaction replaces older agent history with one inspectable summary 
     },
   );
 
-  agent.setHistory(ensureMessageIds([
+  agent.setHistory(fromLangchain([
     ...longTurn('t1'),
     ...longTurn('t2'),
     ...longTurn('t3'),
@@ -77,7 +77,7 @@ test('auto compaction replaces older agent history with one inspectable summary 
   assert.ok(compaction.summary.coveredMessageIds.length > 0);
   assert.ok(compaction.summary.coveredMessageIds.every((id) => beforeIds.has(id)));
 
-  const historyText = agent.getHistory().map((m) => String(m.content)).join('\n');
+  const historyText = agent.getHistory().map((m) => m.text).join('\n');
   assert.doesNotMatch(historyText, /t1 user/);
   assert.match(historyText, /recent-b user|continue the task|live reply/);
 
@@ -102,7 +102,7 @@ test('disabled auto compaction emits over-limit hint and keeps agent history', a
     { model },
   );
 
-  const original = ensureMessageIds([
+  const original = fromLangchain([
     ...longTurn('keep1'),
     ...longTurn('keep2'),
     ...longTurn('keep3'),
@@ -118,7 +118,7 @@ test('disabled auto compaction emits over-limit hint and keeps agent history', a
   assert.equal(agent.getCompactionSummaries().length, 0);
   // Original messages remain; only the new turn is appended.
   assert.ok(agent.getHistory().length >= originalCount);
-  assert.ok(agent.getHistory().some((m) => String(m.content).includes('keep1 user')));
+  assert.ok(agent.getHistory().some((m) => m.text.includes('keep1 user')));
 });
 
 test('model switch uses the new model for compaction and preserves old summary metadata', async () => {
@@ -153,7 +153,7 @@ test('model switch uses the new model for compaction and preserves old summary m
     coveredFromPreview: 'old', coveredToPreview: 'old', model: 'gpt-old',
     createdAt: '2026-01-01T00:00:00.000Z', estimatedTokens: 4,
   }]);
-  agent.setHistory(ensureMessageIds([
+  agent.setHistory(fromLangchain([
     ...longTurn('switch-a'), ...longTurn('switch-b'), ...longTurn('switch-c'), ...longTurn('switch-d'),
   ]));
 
@@ -187,21 +187,21 @@ test('failed summary generation leaves agent history unchanged and emits failure
     },
   );
 
-  const original = ensureMessageIds([
+  const original = fromLangchain([
     ...longTurn('fail1'),
     ...longTurn('fail2'),
     ...longTurn('fail3'),
     ...longTurn('fail4'),
   ]);
   agent.setHistory(original);
-  const snapshot = agent.getHistory().map((m) => String(m.content));
+  const snapshot = agent.getHistory().map((m) => m.text);
 
   const { events } = await collectEvents(agent, 'please continue');
   const failed = events.find((e) => e.type === 'context_compaction_failed');
   assert.ok(failed && failed.type === 'context_compaction_failed');
   assert.match(failed.error, /summarizer down/);
   for (const content of snapshot) {
-    assert.ok(agent.getHistory().some((m) => String(m.content) === content));
+    assert.ok(agent.getHistory().some((m) => m.text === content));
   }
   assert.equal(agent.getCompactionSummaries().length, 0);
 });
@@ -221,14 +221,14 @@ test('existing summaries are never used as input for a new summary', async () =>
     {
       model,
       summarizer: async ({ messages }) => {
-        const joined = messages.map((m) => String(m.content)).join('\n');
+        const joined = messages.map((m) => m.text).join('\n');
         seenInputs.push(joined);
         return 'second-pass-summary';
       },
     },
   );
 
-  agent.setHistory(ensureMessageIds([
+  agent.setHistory(fromLangchain([
     ...longTurn('a'),
     ...longTurn('b'),
     ...longTurn('c'),
@@ -260,7 +260,7 @@ test('clearHistory drops compaction summaries with agent history', () => {
     undefined,
     { model: new FakeListChatModel({ responses: [] }) },
   );
-  agent.setHistory([new HumanMessage('hi'), new AIMessage('yo')]);
+  agent.setHistory(fromLangchain([new HumanMessage('hi'), new AIMessage('yo')]));
   agent.replaceCompactionSummariesForTest([{
     id: 's',
     text: 'sum',

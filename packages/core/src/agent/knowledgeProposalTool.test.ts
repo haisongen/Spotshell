@@ -25,7 +25,7 @@ describe('propose_knowledge_change tool', () => {
     });
     const tool = tools.find((entry) => entry.name === 'propose_knowledge_change');
     assert.ok(tool);
-    const result = await tool!.invoke({
+    const result = await tool!.execute({
       targetKind: 'knowledge',
       targetId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       reason: 'Captured restart tip',
@@ -43,7 +43,7 @@ describe('propose_knowledge_change tool', () => {
       },
     });
     const tool = tools.find((entry) => entry.name === 'propose_knowledge_change')!;
-    const result = await tool.invoke({
+    const result = await tool.execute({
       targetKind: 'host-notes',
       targetId: 'host-1',
       reason: 'note',
