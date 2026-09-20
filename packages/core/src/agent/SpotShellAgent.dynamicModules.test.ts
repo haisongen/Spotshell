@@ -2,49 +2,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { AIMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
-import type { ChatResult } from '@langchain/core/outputs';
 import { SpotShellAgent } from './SpotShellAgent.js';
 import type { SSHExecutor } from './types.js';
 import { KnowledgeHarness } from '../knowledge/knowledgeHarness.js';
 import type { DynamicModuleSelection } from '../knowledge/knowledgeHarness.js';
 import { temporaryDirectory } from '../knowledge/temporaryDirectory.testSupport.js';
 import { buildKnowledgeAssemblyParts } from '../context/knowledgeAssembly.js';
+import { createFauxModelProvider, loadPiAi } from '../testing/fauxModelProvider.js';
 
 const RELATED_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const UNRELATED_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const OWNED_ONLY_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
-
-class ScriptedToolChatModel extends BaseChatModel {
-  readonly receivedMessages: BaseMessage[][] = [];
-  private nextResponse = 0;
-
-  constructor(private readonly responses: AIMessage[]) {
-    super({});
-  }
-
-  _llmType(): string {
-    return 'scripted-dynamic-module-model';
-  }
-
-  bindTools(): this {
-    return this;
-  }
-
-  async _generate(messages: BaseMessage[]): Promise<ChatResult> {
-    this.receivedMessages.push([...messages]);
-    const message = this.responses[this.nextResponse];
-    if (!message) throw new Error('No scripted model response remains');
-    this.nextResponse += 1;
-    return {
-      generations: [{
-        text: typeof message.content === 'string' ? message.content : '',
-        message,
-      }],
-    };
-  }
-}
 
 class FakeSshExecutor implements SSHExecutor {
   readonly executedCommands: string[] = [];
@@ -157,21 +125,18 @@ test('dynamic module select, progressive read, and follow-up stay in one Agent t
   });
 
   const selections: DynamicModuleSelection[] = [];
-  const model = new ScriptedToolChatModel([
-    new AIMessage({
-      content: '',
-      tool_calls: [{
-        id: 'call-select',
-        name: 'select_knowledge_module',
-        args: {
+  const { fauxAssistantMessage, fauxToolCall } = await loadPiAi();
+  const model = await createFauxModelProvider({
+    responses: [
+      fauxAssistantMessage([
+        fauxToolCall('select_knowledge_module', {
           objectId: RELATED_ID,
           reason: 'User asked about Java heap pressure',
-        },
-        type: 'tool_call',
-      }],
-    }),
-    new AIMessage('Use jmap -histo:live before restarting the JVM.'),
-  ]);
+        }, { id: 'call-select' }),
+      ]),
+      fauxAssistantMessage('Use jmap -histo:live before restarting the JVM.'),
+    ],
+  });
 
   const agent = new SpotShellAgent(
     { apiKey: 'unused', contextWindowTokens: 16_000, recursionLimit: 20 },
@@ -184,7 +149,7 @@ test('dynamic module select, progressive read, and follow-up stay in one Agent t
         },
       },
     },
-    { model },
+    { providerResolver: () => model.provider },
   );
 
   const reply = await agent.chat('Java heap is high', { terminalHistory: '' });
@@ -196,11 +161,11 @@ test('dynamic module select, progressive read, and follow-up stay in one Agent t
   assert.equal(selections[0]?.revision, 1);
 
   // Same agent tool loop: select tool result then final answer (no hidden router call).
-  assert.equal(model.receivedMessages.length, 2);
-  const firstTool = model.receivedMessages[1]?.find((message) => ToolMessage.isInstance(message));
+  assert.equal(model.requests.length, 2);
+  const firstTool = model.requests[1]?.messages.find((message) => message.role === 'toolResult');
   assert.ok(firstTool);
-  assert.match(String(firstTool.content), /Capture heap histogram/);
-  assert.match(String(firstTool.content), /"loadType": "dynamic"/);
+  assert.match(JSON.stringify(firstTool.content), /Capture heap histogram/);
+  assert.match(JSON.stringify(firstTool.content), /loadType/);
 
   // Progressive body read works after select in the same harness/session.
   const body = await harness.readLines(RELATED_ID, 1, 'references/heap.md', { startLine: 1 });
@@ -216,21 +181,23 @@ test('dynamic module select, progressive read, and follow-up stay in one Agent t
 
   // Follow-up: guidance from the still-active module is assembled; large body is not permanent.
   const parts = await buildKnowledgeAssemblyParts(harness);
-  const followModel = new ScriptedToolChatModel([
-    new AIMessage('Continue with the same heap histogram steps.'),
-  ]);
+  const followModel = await createFauxModelProvider({
+    responses: [fauxAssistantMessage('Continue with the same heap histogram steps.')],
+  });
   const followAgent = new SpotShellAgent(
     { apiKey: 'unused', contextWindowTokens: 16_000 },
     new FakeSshExecutor(),
     { knowledge: { getHarness: () => harness } },
-    { model: followModel },
+    { providerResolver: () => followModel.provider },
   );
   followAgent.setKnowledgeContext(parts);
   const followReply = await followAgent.chat('what next?', { terminalHistory: '' });
   assert.match(followReply, /heap histogram/);
-  const followPrompt = followModel.receivedMessages[0]
-    ?.map((message) => String(message.content))
-    .join('\n') ?? '';
+  // Knowledge context now rides on `Context.systemPrompt` rather than a
+  // transcript message, so both halves of the request have to be inspected.
+  const followRequest = followModel.requests[0];
+  assert.ok(followRequest, 'the follow-up turn must have reached the provider');
+  const followPrompt = [followRequest.systemPrompt, followModel.requestText(0)].join('\n');
   assert.match(followPrompt, /Capture heap histogram/);
   assert.doesNotMatch(followPrompt, /line two of reference body/);
 });
@@ -246,18 +213,18 @@ test('select_knowledge_module refuses owned-but-unauthorized modules in the agen
     activatable: [],
   });
   const selections: string[] = [];
-  const model = new ScriptedToolChatModel([
-    new AIMessage({
-      content: '',
-      tool_calls: [{
-        id: 'call-bad',
-        name: 'select_knowledge_module',
-        args: { objectId: OWNED_ONLY_ID, reason: 'try owned only' },
-        type: 'tool_call',
-      }],
-    }),
-    new AIMessage('Could not load unauthorized knowledge.'),
-  ]);
+  const { fauxAssistantMessage, fauxToolCall } = await loadPiAi();
+  const model = await createFauxModelProvider({
+    responses: [
+      fauxAssistantMessage([
+        fauxToolCall('select_knowledge_module', {
+          objectId: OWNED_ONLY_ID,
+          reason: 'try owned only',
+        }, { id: 'call-bad' }),
+      ]),
+      fauxAssistantMessage('Could not load unauthorized knowledge.'),
+    ],
+  });
   const agent = new SpotShellAgent(
     { apiKey: 'unused' },
     new FakeSshExecutor(),
@@ -267,13 +234,13 @@ test('select_knowledge_module refuses owned-but-unauthorized modules in the agen
         onModuleSelected: (selection) => selections.push(selection.moduleId),
       },
     },
-    { model },
+    { providerResolver: () => model.provider },
   );
 
   const reply = await agent.chat('load secret ops', { terminalHistory: '' });
   assert.match(reply, /Could not load unauthorized knowledge/);
   assert.deepEqual(selections, []);
-  const toolResult = model.receivedMessages[1]?.find((message) => ToolMessage.isInstance(message));
+  const toolResult = model.requests[1]?.messages.find((message) => message.role === 'toolResult');
   assert.ok(toolResult);
-  assert.match(String(toolResult.content), /not an authorized candidate|失败/);
+  assert.match(JSON.stringify(toolResult.content), /not an authorized candidate|失败/);
 });

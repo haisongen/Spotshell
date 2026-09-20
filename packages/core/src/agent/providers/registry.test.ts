@@ -1,8 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { FakeListChatModel } from '@langchain/core/utils/testing';
-import { AnthropicModelProvider } from './anthropicProvider.js';
-import { OpenAIModelProvider } from './openaiProvider.js';
 import { DEFAULT_CONTEXT_WINDOW } from '../modelContext.js';
 import { getModelProvider, parseModelProviderId } from './registry.js';
 
@@ -12,40 +9,8 @@ test('registry exposes fixed providers and their defaults', () => {
   assert.throws(() => parseModelProviderId('other'), /Unsupported model provider/);
 });
 
-test('OpenAI maps model options and compatible base URL', () => {
-  let fields: ConstructorParameters<typeof import('@langchain/openai').ChatOpenAI>[0];
-  const provider = new OpenAIModelProvider((input) => {
-    fields = input;
-    return new FakeListChatModel({ responses: ['ok'] });
-  });
-  provider.createChatModel({
-    provider: 'openai', apiKey: 'openai-key', model: 'custom', baseURL: 'https://llm.example/v1',
-    temperature: 0, maxTokens: 8,
-  });
-  assert.equal(fields!.apiKey, 'openai-key');
-  assert.equal(fields!.model, 'custom');
-  assert.equal(fields!.configuration?.baseURL, 'https://llm.example/v1');
-  assert.equal(fields!.maxTokens, 8);
-});
-
-test('Anthropic maps API key and native client base URL', () => {
-  let fields: ConstructorParameters<typeof import('@langchain/anthropic').ChatAnthropic>[0];
-  const provider = new AnthropicModelProvider((input) => {
-    fields = input;
-    return new FakeListChatModel({ responses: ['ok'] });
-  });
-  provider.createChatModel({
-    provider: 'anthropic', apiKey: 'anthropic-key', model: 'claude-custom',
-    baseURL: 'https://anthropic.example', temperature: 0, maxTokens: 8,
-  });
-  assert.equal(fields!.apiKey, 'anthropic-key');
-  assert.equal(fields!.model, 'claude-custom');
-  assert.equal(fields!.clientOptions?.baseURL, 'https://anthropic.example');
-});
-
-test('providers reject missing keys and normalize stable error classes', () => {
+test('providers normalize stable error classes', () => {
   const provider = getModelProvider('openai');
-  assert.throws(() => provider.createChatModel({ provider: 'openai', apiKey: '', model: 'x' }), /no API key/);
   assert.deepEqual(provider.normalizeError({ status: 401 }), {
     kind: 'authentication', message: 'The model provider rejected the API credentials.', statusCode: 401,
   });

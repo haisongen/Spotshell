@@ -4,9 +4,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { AIMessage, type BaseMessage } from '@langchain/core/messages'
-import type { ChatResult } from '@langchain/core/outputs'
 import {
   KnowledgeRepository,
   SpotShellAgent,
@@ -16,6 +13,7 @@ import {
 import type { AgentEvent, SessionSummary } from '../shared/ipc-types'
 import { KnowledgeCatalogService } from './KnowledgeCatalogService'
 import { ModuleAuthorizationStore } from './ModuleAuthorizationStore'
+import { createFauxModelProvider, loadPiAi } from '@spotshell/core/testing'
 import { SessionManager } from './SessionManager'
 
 class FakeStream extends EventEmitter {
@@ -48,70 +46,26 @@ class FakeSshClient extends EventEmitter {
 }
 
 /** Scripted model that can select a module, refuse one, or answer without tools. */
-class ScriptedSelectModel extends BaseChatModel {
-  private invocation = 0
-
-  constructor(
-    private readonly getPlan: () => {
-      mode: 'select-related' | 'select-unauthorized' | 'answer-only'
-      relatedId: string
-      unauthorizedId: string
-    },
-  ) {
-    super({})
-  }
-
-  _llmType(): string {
-    return 'desktop-dynamic-module-fake'
-  }
-
-  bindTools(): this {
-    return this
-  }
-
-  async _generate(_messages: BaseMessage[]): Promise<ChatResult> {
-    this.invocation += 1
-    const plan = this.getPlan()
-    if (plan.mode === 'answer-only') {
-      return {
-        generations: [{
-          text: 'Follow-up with active module guidance.',
-          message: new AIMessage('Follow-up with active module guidance.'),
-        }],
-      }
-    }
-    if (this.invocation === 1) {
-      const objectId = plan.mode === 'select-unauthorized'
-        ? plan.unauthorizedId
-        : plan.relatedId
-      return {
-        generations: [{
-          text: '',
-          message: new AIMessage({
-            content: '',
-            tool_calls: [{
-              id: 'select-1',
-              name: 'select_knowledge_module',
-              args: {
-                objectId,
-                reason: plan.mode === 'select-unauthorized'
-                  ? 'try unauthorized'
-                  : 'User asked about JVM heap pressure',
-              },
-              type: 'tool_call',
-            }],
-          }),
-        }],
-      }
-    }
-    const text = plan.mode === 'select-unauthorized'
-      ? 'Unauthorized module was refused.'
-      : 'Loaded JVM guidance for heap pressure.'
-    return {
-      generations: [{ text, message: new AIMessage(text) }],
-    }
-  }
+/**
+ * Replaces the hand-rolled langchain fake. Each phase of the test scripts the
+ * provider explicitly instead of flipping a shared `plan` flag, so what the
+ * model is about to do is visible at the call site.
+ */
+async function selectModulePhase(objectId: string, reason: string, answer: string) {
+  const { fauxAssistantMessage, fauxToolCall } = await loadPiAi()
+  return [
+    fauxAssistantMessage([
+      fauxToolCall('select_knowledge_module', { objectId, reason }, { id: 'select-1' }),
+    ]),
+    fauxAssistantMessage(answer),
+  ]
 }
+
+async function answerOnlyPhase(answer: string) {
+  const { fauxAssistantMessage } = await loadPiAi()
+  return [fauxAssistantMessage(answer)]
+}
+
 
 async function waitForReady(manager: SessionManager): Promise<SessionSummary> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -164,15 +118,13 @@ test('fake model integration: related load, unauthorized refuse, follow-up, unlo
   authorizations.setGlobalOnDemand(related.id, true)
   authorizations.setGlobalOnDemand(unrelated.id, true)
 
-  let plan: {
-    mode: 'select-related' | 'select-unauthorized' | 'answer-only'
-    relatedId: string
-    unauthorizedId: string
-  } = {
-    mode: 'select-related',
-    relatedId: related.id,
-    unauthorizedId: ownedOnly.id,
-  }
+  const model = await createFauxModelProvider({
+    responses: await selectModulePhase(
+      related.id,
+      'User asked about JVM heap pressure',
+      'Loaded JVM guidance for heap pressure.',
+    ),
+  })
 
   const manager = new SessionManager(
     () => ({ apiKey: 'unused', contextWindowTokens: 32_000 }),
@@ -186,7 +138,7 @@ test('fake model integration: related load, unauthorized refuse, follow-up, unlo
       config,
       executor,
       extras,
-      { model: new ScriptedSelectModel(() => plan) },
+      { providerResolver: () => model.provider },
     ),
     {
       getBoundEnvironmentId: () => undefined,
@@ -230,26 +182,11 @@ test('fake model integration: related load, unauthorized refuse, follow-up, unlo
   // 2) Follow-up keeps the dynamic module active; no new selection event.
   // Fresh agent instance for answer-only: reconnect keeps session module state only if we stay
   // on the same session. Use the same agent by answering without tools — but the existing agent
-  // still has the first scripted model instance which already advanced invocations.
-  // Reconnect creates a new model; preserve dynamic modules by not switching environments.
-  // Instead unload is tested after we chat with a newly connected session that reloads dynamics.
-  // For same-session follow-up, pin the module via load then use a new connection is wrong.
-  // Simpler: call chat again — the existing ScriptedSelectModel will treat invocation>1 as final
-  // only if plan stays select-related. Switch plan to answer-only AND replace agent by reconnecting
-  // is needed. Keep dynamicModuleIds by not clearing them: reconnect creates a NEW session.
-  // So for follow-up on the same session we need the same agent to support answer-only.
-  plan = { ...plan, mode: 'answer-only' }
-  // Existing model instance ignores plan.mode changes for invocation count > 1 when mode was
-  // select-related — invocation is already 2+, so next chatStream builds graph once and
-  // model.invocation continues. With answer-only mode, any invocation returns final text.
-  // But this agent still holds the OLD model created at connect. Fix: factory creates model
-  // that reads plan each time; but agent is not recreated. So recreate agent by closing and
-  // reconnecting loses dynamicModuleIds.
-  // Work around: manually re-load module after reconnect, OR make model always consult plan.
-  // ScriptedSelectModel already consults plan each _generate. The problem is only the
-  // invocation counter on the same instance: after first chat invocation===2. Second chat
-  // resets graph stream but model.invocation stays at 2. With mode answer-only, first line
-  // of _generate checks mode first — good, returns answer-only regardless of invocation.
+  // Follow-up on the same session and the same agent: re-script the provider so
+  // the next turn answers directly instead of selecting a module again. The old
+  // langchain fake needed an invocation counter here; the faux provider replays
+  // a queue, so the phase is just a new response list.
+  model.setResponses(await answerOnlyPhase('Follow-up with active module guidance.'))
   const afterFirst = events.length
   const followReply = await manager.chat(ready.id, 'what next for the heap?')
   assert.match(followReply, /Follow-up|guidance|heap/i)
@@ -277,7 +214,11 @@ test('fake model integration: related load, unauthorized refuse, follow-up, unlo
 
   // 4) Unauthorized owned module cannot be selected on a fresh session.
   manager.close(ready.id)
-  plan = { ...plan, mode: 'select-unauthorized' }
+  model.setResponses(await selectModulePhase(
+    ownedOnly.id,
+    'try unauthorized',
+    'Unauthorized module was refused.',
+  ))
   await manager.connect({
     host: 'server.example',
     port: 22,

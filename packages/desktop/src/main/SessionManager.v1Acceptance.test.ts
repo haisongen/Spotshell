@@ -11,9 +11,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { AIMessage, type BaseMessage } from '@langchain/core/messages'
-import type { ChatResult } from '@langchain/core/outputs'
 import {
   HostStore,
   KnowledgeRepository,
@@ -28,6 +25,7 @@ import type { AgentEvent, SessionSummary } from '../shared/ipc-types'
 import { HostEnvironmentBindings } from './HostEnvironmentBindings'
 import { KnowledgeCatalogService } from './KnowledgeCatalogService'
 import { ModuleAuthorizationStore } from './ModuleAuthorizationStore'
+import { createFauxModelProvider, loadPiAi } from '@spotshell/core/testing'
 import { SessionManager } from './SessionManager'
 import { runOfficialSeedMigration } from './seedModules'
 
@@ -64,42 +62,18 @@ class FakeSshClient extends EventEmitter {
 }
 
 /** Deterministic multi-turn model driven by a shared response queue. */
-class QueueToolModel extends BaseChatModel {
-  constructor(private readonly queue: AIMessage[]) {
-    super({})
+/**
+ * The acceptance queue used to be replayed by a hand-rolled langchain model.
+ * `fauxProvider()` already replays a scripted queue, so these helpers only
+ * build the messages; ordering and consumption are the provider's job.
+ */
+async function scripted() {
+  const { fauxAssistantMessage, fauxToolCall } = await loadPiAi()
+  return {
+    aiText: (text: string) => fauxAssistantMessage(text),
+    aiTool: (id: string, name: string, args: Record<string, unknown>) =>
+      fauxAssistantMessage([fauxToolCall(name, args, { id })]),
   }
-
-  _llmType(): string {
-    return 'v1-acceptance-queue'
-  }
-
-  bindTools(): this {
-    return this
-  }
-
-  async _generate(_messages: BaseMessage[]): Promise<ChatResult> {
-    const message = this.queue.shift()
-    if (!message) {
-      throw new Error('Acceptance model queue is empty')
-    }
-    const text = typeof message.content === 'string' ? message.content : ''
-    return { generations: [{ text, message }] }
-  }
-}
-
-function aiText(text: string): AIMessage {
-  return new AIMessage(text)
-}
-
-function aiTool(
-  id: string,
-  name: string,
-  args: Record<string, unknown>,
-): AIMessage {
-  return new AIMessage({
-    content: '',
-    tool_calls: [{ id, name, args, type: 'tool_call' }],
-  })
 }
 
 async function waitForReady(manager: SessionManager, sessionId?: string): Promise<SessionSummary> {
@@ -212,7 +186,8 @@ test('v1 acceptance: seed → authorize → bind → connect → chat → dynami
     environmentId: env.environment.id,
   })
 
-  const modelQueue: AIMessage[] = [
+  const { aiText, aiTool } = await scripted()
+  const modelQueue = [
     // Chat 1: select on-demand → read entry → answer with knowledge
     aiTool('select-1', 'select_knowledge_module', {
       objectId: onDemand.module.id,
@@ -236,6 +211,7 @@ test('v1 acceptance: seed → authorize → bind → connect → chat → dynami
     }),
     aiText('New context reloaded the on-demand module.'),
   ]
+  const model = await createFauxModelProvider({ responses: modelQueue })
 
   const manager = new SessionManager(
     () => ({ apiKey: 'unused', contextWindowTokens: 32_000, recursionLimit: 20 }),
@@ -249,7 +225,7 @@ test('v1 acceptance: seed → authorize → bind → connect → chat → dynami
       config,
       executor,
       extras,
-      { model: new QueueToolModel(modelQueue) },
+      { providerResolver: () => model.provider },
     ),
     bindings,
     catalog,
@@ -401,7 +377,8 @@ test('v1 acceptance: multi-session events stay isolated and knowledge cannot wea
   authorizations.setGlobalOnDemand(allowed.module.id, true)
   // ownedOnly remains unauthorized.
 
-  const modelQueue: AIMessage[] = [
+  const { aiText, aiTool } = await scripted()
+  const modelQueue = [
     aiTool('bad-select', 'select_knowledge_module', {
       objectId: ownedOnly.module.id,
       reason: 'try unauthorized elevate',
@@ -413,6 +390,7 @@ test('v1 acceptance: multi-session events stay isolated and knowledge cannot wea
     }),
     aiText('Authorized module loaded on session B.'),
   ]
+  const model = await createFauxModelProvider({ responses: modelQueue })
 
   const manager = new SessionManager(
     () => ({ apiKey: 'unused', contextWindowTokens: 32_000, recursionLimit: 20 }),
@@ -426,7 +404,7 @@ test('v1 acceptance: multi-session events stay isolated and knowledge cannot wea
       config,
       executor,
       extras,
-      { model: new QueueToolModel(modelQueue) },
+      { providerResolver: () => model.provider },
     ),
     {
       getBoundEnvironmentId: () => undefined,

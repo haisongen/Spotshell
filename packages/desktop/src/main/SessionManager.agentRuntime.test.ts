@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
-import { BaseChatModel } from '@langchain/core/language_models/chat_models'
-import { AIMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages'
-import type { ChatResult } from '@langchain/core/outputs'
+import { createFauxModelProvider, loadPiAi } from '@spotshell/core/testing'
+import { assistantMessage } from '@spotshell/core'
 import { AgentCancelledError, SpotShellAgent } from '@spotshell/core'
 import type {
   AgentContext,
@@ -128,43 +127,22 @@ class DeferredFakeAgent extends FakeAgent {
   }
 }
 
-class ToolCallingFakeModel extends BaseChatModel {
-  private invocation = 0
-
-  _llmType(): string {
-    return 'desktop-tool-calling-fake'
-  }
-
-  bindTools(): this {
-    return this
-  }
-
-  async _generate(messages: BaseMessage[]): Promise<ChatResult> {
-    this.invocation += 1
-    if (this.invocation === 1) {
-      return {
-        generations: [{
-          text: '',
-          message: new AIMessage({
-            content: '',
-            tool_calls: [{
-              id: 'desktop-call-1',
-              name: 'execute_ssh_command',
-              args: { command: 'uname -a' },
-              type: 'tool_call',
-            }],
-          }),
-        }],
-      }
-    }
-
-    const toolResult = messages.findLast((message) => ToolMessage.isInstance(message))
-    if (!toolResult) throw new Error('Expected an SSH tool result')
-    const text = `Observed SSH result: ${String(toolResult.content)}`
-    return {
-      generations: [{ text, message: new AIMessage(text) }],
-    }
-  }
+/**
+ * Scripts the same two-step exchange the old langchain fake produced: first a
+ * tool call, then a text answer that quotes the tool result. The faux provider
+ * replays fixed responses, so the assertion that the tool result actually
+ * reached the model moved onto the recorded request (see the test below).
+ */
+async function toolCallingFauxProvider() {
+  const { fauxAssistantMessage, fauxToolCall } = await loadPiAi()
+  return createFauxModelProvider({
+    responses: [
+      fauxAssistantMessage([
+        fauxToolCall('execute_ssh_command', { command: 'uname -a' }, { id: 'desktop-call-1' }),
+      ]),
+      fauxAssistantMessage('Observed SSH result: Linux desktop-fake 6.8.0'),
+    ],
+  })
 }
 
 async function waitForReady(manager: SessionManager): Promise<SessionSummary> {
@@ -251,7 +229,7 @@ test('cancelChat aborts an injected Agent runtime and emits a cancelled event', 
 
 test('desktop Chat combines a real Agent with a fake model and fake SSH command result', async () => {
   const fakeSsh = new FakeSshClient()
-  const model = new ToolCallingFakeModel({})
+  const model = await toolCallingFauxProvider()
   const manager = new SessionManager(
     () => ({ apiKey: 'unused' }),
     { get: () => undefined, set: () => undefined } as never,
@@ -260,7 +238,8 @@ test('desktop Chat combines a real Agent with a fake model and fake SSH command 
     () => false,
     () => 'saved',
     () => fakeSsh as unknown as SSHClient,
-    (config, executor, extras) => new SpotShellAgent(config, executor, extras, { model })
+    (config, executor, extras) =>
+      new SpotShellAgent(config, executor, extras, { providerResolver: () => model.provider })
   )
   const events: AgentEvent[] = []
   manager.on('agent', (event: AgentEvent) => events.push(event))
@@ -275,7 +254,13 @@ test('desktop Chat combines a real Agent with a fake model and fake SSH command 
   const reply = await manager.chat(ready.id, 'Inspect the kernel')
 
   assert.match(reply, /Linux desktop-fake 6\.8\.0/)
-  assert.deepEqual(events.map((event) => event.type), [
+  // A real provider streams the answer in several deltas, so collapse runs of
+  // token_delta before comparing the shape, then assert the streamed text is
+  // complete — together that is stricter than pinning the delta count.
+  const shape = events
+    .map((event) => event.type)
+    .filter((type, index, all) => !(type === 'token_delta' && all[index - 1] === 'token_delta'))
+  assert.deepEqual(shape, [
     'status',
     'context_usage',
     'tool_start',
@@ -283,6 +268,11 @@ test('desktop Chat combines a real Agent with a fake model and fake SSH command 
     'token_delta',
     'final',
   ])
+  const streamed = events
+    .filter((event) => event.type === 'token_delta')
+    .map((event) => (event.type === 'token_delta' ? event.text : ''))
+    .join('')
+  assert.equal(streamed, reply)
   const usage = events.find((event) => event.type === 'context_usage')
   assert.ok(usage && usage.type === 'context_usage')
   assert.equal(usage.usage.estimated, true)
@@ -292,13 +282,18 @@ test('desktop Chat combines a real Agent with a fake model and fake SSH command 
   assert.ok(toolEnd && toolEnd.type === 'tool_end')
   assert.equal(toolEnd.name, 'execute_ssh_command')
   assert.match(toolEnd.output, /Linux desktop-fake 6\.8\.0/)
+  // The tool result must have re-entered the model on the follow-up request.
+  const followUp = model.requests[1]
+  assert.ok(followUp, 'the tool result should trigger a second provider request')
+  const followUpText = followUp.messages.map((m) => JSON.stringify(m.content)).join(' ')
+  assert.match(followUpText, /Linux desktop-fake 6\.8\.0/)
 })
 
 test('model refresh waits for the active turn, then preserves history for the next provider', async () => {
   let config: AgentConfig | null = { provider: 'openai', apiKey: 'openai-key', model: 'gpt-old' }
   const created: Array<{ config: AgentConfig; agent: FakeAgent }> = []
   const first = new DeferredFakeAgent()
-  first.setHistory([new AIMessage('earlier history')])
+  first.setHistory([assistantMessage('earlier history')])
   const manager = new SessionManager(
     () => config,
     { get: () => undefined, set: () => undefined } as never,
@@ -326,7 +321,7 @@ test('model refresh waits for the active turn, then preserves history for the ne
   assert.equal(await turn, 'finished old turn')
   assert.equal(created.length, 2)
   assert.equal(created[1]?.config.provider, 'anthropic')
-  assert.equal(created[1]?.agent.getHistory()[0]?.content, 'earlier history')
+  assert.equal(created[1]?.agent.getHistory()[0]?.text, 'earlier history')
 })
 
 test('clearing the active provider key blocks future turns without disconnecting SSH', async () => {

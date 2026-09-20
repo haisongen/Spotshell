@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AIMessage, HumanMessage, type BaseMessage } from '@langchain/core/messages';
-import { FakeListChatModel } from '@langchain/core/utils/testing';
 import { SpotShellAgent } from './SpotShellAgent.js';
 import type { AgentStreamEvent, SSHExecutor } from './types.js';
 import type { ModelProvider } from './providers/types.js';
-import { fromLangchain } from './langchainAdapter.js';
+import { assistantMessage, userMessage, type AgentMessage } from './message.js';
+import { createFauxModelProvider, loadPiAi } from '../testing/fauxModelProvider.js';
 
 class FakeSshExecutor implements SSHExecutor {
   async execute(command: string) {
@@ -24,10 +23,10 @@ class FakeSshExecutor implements SSHExecutor {
   }
 }
 
-function longTurn(label: string): BaseMessage[] {
+function longTurn(label: string): AgentMessage[] {
   return [
-    new HumanMessage(`${label} user ${'x'.repeat(800)}`),
-    new AIMessage(`${label} assistant ${'y'.repeat(800)}`),
+    userMessage(`${label} user ${'x'.repeat(800)}`),
+    assistantMessage(`${label} assistant ${'y'.repeat(800)}`),
   ];
 }
 
@@ -42,7 +41,8 @@ function collectEvents(agent: SpotShellAgent, userInput: string): Promise<{
 }
 
 test('auto compaction replaces older agent history with one inspectable summary and meters it', async () => {
-  const model = new FakeListChatModel({ responses: ['live reply'] });
+  const { fauxAssistantMessage } = await loadPiAi();
+  const faux = await createFauxModelProvider({ responses: [fauxAssistantMessage('live reply')] });
   const agent = new SpotShellAgent(
     {
       apiKey: 'unused',
@@ -53,18 +53,18 @@ test('auto compaction replaces older agent history with one inspectable summary 
     new FakeSshExecutor(),
     undefined,
     {
-      model,
+      providerResolver: () => faux.provider,
       summarizer: async () => 'SUMMARY_OF_OLD_TURNS',
     },
   );
 
-  agent.setHistory(fromLangchain([
+  agent.setHistory([
     ...longTurn('t1'),
     ...longTurn('t2'),
     ...longTurn('t3'),
     ...longTurn('recent-a'),
     ...longTurn('recent-b'),
-  ]));
+  ]);
 
   const beforeIds = new Set(agent.getHistory().map((m) => m.id).filter(Boolean));
   const { reply, events } = await collectEvents(agent, 'continue the task');
@@ -89,7 +89,10 @@ test('auto compaction replaces older agent history with one inspectable summary 
 });
 
 test('disabled auto compaction emits over-limit hint and keeps agent history', async () => {
-  const model = new FakeListChatModel({ responses: ['reply without compact'] });
+  const { fauxAssistantMessage } = await loadPiAi();
+  const faux = await createFauxModelProvider({
+    responses: [fauxAssistantMessage('reply without compact')],
+  });
   const agent = new SpotShellAgent(
     {
       apiKey: 'unused',
@@ -99,15 +102,15 @@ test('disabled auto compaction emits over-limit hint and keeps agent history', a
     },
     new FakeSshExecutor(),
     undefined,
-    { model },
+    { providerResolver: () => faux.provider },
   );
 
-  const original = fromLangchain([
+  const original = [
     ...longTurn('keep1'),
     ...longTurn('keep2'),
     ...longTurn('keep3'),
     ...longTurn('keep4'),
-  ]);
+  ];
   agent.setHistory(original);
   const originalCount = agent.getHistory().length;
 
@@ -123,24 +126,19 @@ test('disabled auto compaction emits over-limit hint and keeps agent history', a
 
 test('model switch uses the new model for compaction and preserves old summary metadata', async () => {
   const seenModelNames: string[] = [];
-  const newModel = new FakeListChatModel({ responses: ['new-model reply'] });
-  const anthropic: ModelProvider = {
+  const { fauxAssistantMessage } = await loadPiAi();
+  const newFaux = await createFauxModelProvider({
     id: 'anthropic',
-    defaultModel: 'claude-sonnet-4-5',
-    createChatModel: () => newModel,
-    normalizeError: () => ({ kind: 'unknown', message: 'provider failed' }),
-  };
-  const openai: ModelProvider = {
-    ...anthropic,
-    id: 'openai',
-    defaultModel: 'gpt-4o-mini',
-  };
+    modelId: 'claude-sonnet-4-5',
+    responses: [fauxAssistantMessage('new-model reply')],
+  });
+  const anthropic: ModelProvider = newFaux.provider;
+  const openai: ModelProvider = { ...anthropic, id: 'openai', defaultModel: 'gpt-4o-mini' };
   const agent = new SpotShellAgent(
     { provider: 'openai', apiKey: 'old-key', model: 'gpt-old', contextWindowTokens: 4_096 },
     new FakeSshExecutor(),
     undefined,
     {
-      model: new FakeListChatModel({ responses: [] }),
       providerResolver: (id) => id === 'anthropic' ? anthropic : openai,
       summarizer: async ({ modelName }) => {
         seenModelNames.push(modelName);
@@ -153,9 +151,9 @@ test('model switch uses the new model for compaction and preserves old summary m
     coveredFromPreview: 'old', coveredToPreview: 'old', model: 'gpt-old',
     createdAt: '2026-01-01T00:00:00.000Z', estimatedTokens: 4,
   }]);
-  agent.setHistory(fromLangchain([
+  agent.setHistory([
     ...longTurn('switch-a'), ...longTurn('switch-b'), ...longTurn('switch-c'), ...longTurn('switch-d'),
-  ]));
+  ]);
 
   agent.updateModel({
     provider: 'anthropic', apiKey: 'new-key', model: 'claude-new', contextWindowTokens: 4_096,
@@ -169,7 +167,8 @@ test('model switch uses the new model for compaction and preserves old summary m
 });
 
 test('failed summary generation leaves agent history unchanged and emits failure', async () => {
-  const model = new FakeListChatModel({ responses: ['still works'] });
+  const { fauxAssistantMessage } = await loadPiAi();
+  const faux = await createFauxModelProvider({ responses: [fauxAssistantMessage('still works')] });
   const agent = new SpotShellAgent(
     {
       apiKey: 'unused',
@@ -180,19 +179,19 @@ test('failed summary generation leaves agent history unchanged and emits failure
     new FakeSshExecutor(),
     undefined,
     {
-      model,
+      providerResolver: () => faux.provider,
       summarizer: async () => {
         throw new Error('summarizer down');
       },
     },
   );
 
-  const original = fromLangchain([
+  const original = [
     ...longTurn('fail1'),
     ...longTurn('fail2'),
     ...longTurn('fail3'),
     ...longTurn('fail4'),
-  ]);
+  ];
   agent.setHistory(original);
   const snapshot = agent.getHistory().map((m) => m.text);
 
@@ -208,7 +207,8 @@ test('failed summary generation leaves agent history unchanged and emits failure
 
 test('existing summaries are never used as input for a new summary', async () => {
   const seenInputs: string[] = [];
-  const model = new FakeListChatModel({ responses: ['ok'] });
+  const { fauxAssistantMessage } = await loadPiAi();
+  const faux = await createFauxModelProvider({ responses: [fauxAssistantMessage('ok')] });
   const agent = new SpotShellAgent(
     {
       apiKey: 'unused',
@@ -219,7 +219,7 @@ test('existing summaries are never used as input for a new summary', async () =>
     new FakeSshExecutor(),
     undefined,
     {
-      model,
+      providerResolver: () => faux.provider,
       summarizer: async ({ messages }) => {
         const joined = messages.map((m) => m.text).join('\n');
         seenInputs.push(joined);
@@ -228,12 +228,12 @@ test('existing summaries are never used as input for a new summary', async () =>
     },
   );
 
-  agent.setHistory(fromLangchain([
+  agent.setHistory([
     ...longTurn('a'),
     ...longTurn('b'),
     ...longTurn('c'),
     ...longTurn('d'),
-  ]));
+  ]);
   // Seed an independent prior summary that must not be re-fed.
   agent.replaceCompactionSummariesForTest([{
     id: 'seed',
@@ -253,14 +253,15 @@ test('existing summaries are never used as input for a new summary', async () =>
   }
 });
 
-test('clearHistory drops compaction summaries with agent history', () => {
+test('clearHistory drops compaction summaries with agent history', async () => {
+  const faux = await createFauxModelProvider({});
   const agent = new SpotShellAgent(
     { apiKey: 'unused', contextWindowTokens: 8_000 },
     new FakeSshExecutor(),
     undefined,
-    { model: new FakeListChatModel({ responses: [] }) },
+    { providerResolver: () => faux.provider },
   );
-  agent.setHistory(fromLangchain([new HumanMessage('hi'), new AIMessage('yo')]));
+  agent.setHistory([userMessage('hi'), assistantMessage('yo')]);
   agent.replaceCompactionSummariesForTest([{
     id: 's',
     text: 'sum',
@@ -274,4 +275,80 @@ test('clearHistory drops compaction summaries with agent history', () => {
   agent.clearHistory();
   assert.deepEqual(agent.getHistory(), []);
   assert.deepEqual(agent.getCompactionSummaries(), []);
+});
+
+test('the built-in summarizer sends a tool-free one-shot request and returns its text', async () => {
+  const { fauxAssistantMessage } = await loadPiAi();
+  const faux = await createFauxModelProvider({
+    responses: [
+      // First request is the summarization; the live turn answers second.
+      fauxAssistantMessage('BUILT_IN_SUMMARY'),
+      fauxAssistantMessage('reply after built-in compaction'),
+    ],
+  });
+  const agent = new SpotShellAgent(
+    {
+      apiKey: 'unused',
+      model: 'gpt-test-builtin',
+      contextWindowTokens: 4_096,
+      allowAutoContextCompaction: true,
+    },
+    new FakeSshExecutor(),
+    undefined,
+    { providerResolver: () => faux.provider },
+  );
+  agent.setHistory([
+    ...longTurn('b1'),
+    ...longTurn('b2'),
+    ...longTurn('b3'),
+    ...longTurn('b4'),
+  ]);
+
+  const { reply, events } = await collectEvents(agent, 'continue');
+
+  assert.equal(reply, 'reply after built-in compaction');
+  const compaction = events.find((e) => e.type === 'context_compaction');
+  assert.ok(compaction && compaction.type === 'context_compaction');
+  assert.equal(compaction.summary.text, 'BUILT_IN_SUMMARY');
+  assert.equal(compaction.summary.model, 'gpt-test-builtin');
+
+  // The summarization request carries no tools and exactly one user message.
+  assert.equal(faux.requests.length, 2);
+  assert.deepEqual(faux.requests[0]?.toolNames, []);
+  assert.equal(faux.requests[0]?.messages.length, 1);
+  assert.match(faux.requests[0]?.systemPrompt ?? '', /压缩为连续摘要/);
+  assert.match(faux.requestText(0), /b1 user/);
+  // The live turn that follows does carry the SSH tools.
+  assert.ok((faux.requests[1]?.toolNames ?? []).includes('execute_ssh_command'));
+});
+
+test('a failing built-in summarization is reported and leaves history untouched', async () => {
+  const { fauxAssistantMessage } = await loadPiAi();
+  const faux = await createFauxModelProvider({
+    responses: [
+      fauxAssistantMessage('', { stopReason: 'error', errorMessage: 'summary endpoint down' }),
+      fauxAssistantMessage('reply despite failed compaction'),
+    ],
+  });
+  const agent = new SpotShellAgent(
+    {
+      apiKey: 'unused',
+      model: 'gpt-test-builtin-fail',
+      contextWindowTokens: 4_096,
+      allowAutoContextCompaction: true,
+    },
+    new FakeSshExecutor(),
+    undefined,
+    { providerResolver: () => faux.provider },
+  );
+  agent.setHistory([...longTurn('f1'), ...longTurn('f2'), ...longTurn('f3'), ...longTurn('f4')]);
+
+  const { reply, events } = await collectEvents(agent, 'continue anyway');
+
+  assert.equal(reply, 'reply despite failed compaction');
+  const failed = events.find((e) => e.type === 'context_compaction_failed');
+  assert.ok(failed && failed.type === 'context_compaction_failed');
+  assert.match(failed.error, /summary endpoint down/);
+  assert.equal(agent.getCompactionSummaries().length, 0);
+  assert.ok(agent.getHistory().some((m) => m.text.includes('f1 user')));
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import test from 'node:test'
-import { HumanMessage } from '@langchain/core/messages'
+import { userMessage } from '@spotshell/core'
 import type {
   AgentContext,
   AgentHistory,
@@ -41,7 +41,7 @@ class FakeAgent implements AgentRuntime {
     options: ChatStreamOptions = {},
   ): Promise<string> {
     this.chats.push({ message, context })
-    this.history = [...this.history, new HumanMessage(message)]
+    this.history = [...this.history, userMessage(message)]
     options.onEvent?.({ type: 'token', text: 'ok' })
     return 'ok'
   }

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { FakeListChatModel } from '@langchain/core/utils/testing'
 import type {
   ModelProvider,
   ModelProviderConfig,
@@ -61,7 +60,6 @@ test('probe dispatches both providers with draft options and draft key precedenc
   const provider = (id: ModelProviderId): ModelProvider => ({
     id,
     defaultModel: id === 'openai' ? 'gpt-default' : 'claude-default',
-    createChatModel: () => new FakeListChatModel({ responses: ['unused'] }),
     resolveModel: (config) => {
       received.push({ ...config })
       return fakeResolved(config)
@@ -93,7 +91,6 @@ test('probe forwards the resolved request options and an abort signal to pi-ai',
   const provider: ModelProvider = {
     id: 'openai',
     defaultModel: 'gpt-default',
-    createChatModel: () => new FakeListChatModel({ responses: ['unused'] }),
     resolveModel: (config) => fakeResolved(config, {
       complete: async (options) => {
         seen.push(options)
@@ -118,7 +115,6 @@ test('probe only falls back to the selected provider saved key', async () => {
   const provider: ModelProvider = {
     id: 'anthropic',
     defaultModel: 'claude-default',
-    createChatModel: () => new FakeListChatModel({ responses: ['unused'] }),
     resolveModel: (config) => {
       seenKeys.push(config.apiKey)
       return fakeResolved(config)
@@ -145,7 +141,6 @@ test('probe reports normalized errors without returning provider response bodies
   const provider: ModelProvider = {
     id: 'openai',
     defaultModel: 'gpt-default',
-    createChatModel: () => { throw new Error('secret response body') },
     resolveModel: () => Promise.reject(new Error('secret response body')),
     normalizeError: () => ({ kind: 'rate-limit', message: 'Rate limited.', statusCode: 429 }),
     normalizeAssistantFailure: () => ({ kind: 'unknown', message: 'failed' }),
@@ -163,7 +158,6 @@ test('probe normalizes a failed assistant message instead of treating it as succ
   const provider: ModelProvider = {
     id: 'openai',
     defaultModel: 'gpt-default',
-    createChatModel: () => new FakeListChatModel({ responses: ['unused'] }),
     resolveModel: (config) => fakeResolved(config, {
       complete: async () => assistant({
         stopReason: 'error',
@@ -193,7 +187,6 @@ test('probe enforces its timeout even when a model ignores abort', async () => {
   const provider: ModelProvider = {
     id: 'openai',
     defaultModel: 'gpt-default',
-    createChatModel: () => new FakeListChatModel({ responses: ['unused'] }),
     resolveModel: (config) => fakeResolved(config, {
       complete: () => new Promise<Assistant>(() => undefined),
     }),

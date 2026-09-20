@@ -13,7 +13,7 @@ import {
   userMessage,
   type AgentMessage,
 } from './message.js';
-import { fromLangchain, toLangchain } from './langchainAdapter.js';
+import { fromPiMessages, toPiMessages } from './piAdapter.js';
 
 function sampleHistory(): AgentMessage[] {
   return [
@@ -86,22 +86,31 @@ describe('makeMessageId', () => {
   });
 });
 
-describe('langchain adapter round trip', () => {
-  it('preserves ids, roles, content and tool_call pairing', () => {
-    const original = sampleHistory();
-    const restored = fromLangchain(toLangchain(original));
+describe('pi adapter round trip', () => {
+  const ORIGIN = { api: 'openai-responses', provider: 'openai', model: 'gpt-4o-mini' } as const;
+  const roundTrip = (messages: AgentMessage[]) =>
+    fromPiMessages(toPiMessages(messages, ORIGIN));
+  /** pi carries the system prompt on the request, not in the transcript. */
+  const withoutSystem = (messages: AgentMessage[]) => messages.filter((m) => !isSystem(m));
 
-    // Timestamps are not carried by langchain messages; everything else must match.
-    assert.deepEqual(
-      restored.map((m) => ({ ...m, timestamp: 0 })),
-      original.map((m) => ({ ...m, timestamp: 0 })),
-    );
-    assert.deepEqual(restored.map((m) => m.id), original.map((m) => m.id));
-    assert.ok(restored.every((m) => typeof m.timestamp === 'number'));
+  it('preserves ids, roles, content, timestamps and tool call pairing', () => {
+    const original = sampleHistory();
+    const restored = roundTrip(original);
+
+    // Unlike the langchain bridge, pi messages carry a timestamp, so the whole
+    // message must survive verbatim — only the system message is dropped.
+    assert.deepEqual(restored, withoutSystem(original));
+    assert.deepEqual(restored.map((m) => m.id), withoutSystem(original).map((m) => m.id));
+  });
+
+  it('drops system messages because pi carries the prompt on the request', () => {
+    const restored = roundTrip(sampleHistory());
+    assert.equal(restored.filter(isSystem).length, 0);
+    assert.equal(sampleHistory().filter(isSystem).length, 1);
   });
 
   it('keeps tool calls paired with their results across the round trip', () => {
-    const restored = fromLangchain(toLangchain(sampleHistory()));
+    const restored = roundTrip(sampleHistory());
     const calls = restored.filter(isAssistant).flatMap((m) => m.toolCalls);
     const results = restored.filter(isToolResult);
     assert.deepEqual(calls.map((c) => c.id), ['call-1', 'call-2']);
@@ -112,20 +121,17 @@ describe('langchain adapter round trip', () => {
   });
 
   it('round trips an empty history and a lone message', () => {
-    assert.deepEqual(fromLangchain(toLangchain([])), []);
+    assert.deepEqual(roundTrip([]), []);
     const lone = [userMessage('solo', 7)];
-    const restored = fromLangchain(toLangchain(lone));
+    const restored = roundTrip(lone);
     assert.equal(restored.length, 1);
     assert.equal(restored[0]?.text, 'solo');
     assert.equal(restored[0]?.id, lone[0]!.id);
+    assert.equal(restored[0]?.timestamp, 7);
   });
 
   it('is idempotent when applied twice', () => {
-    const once = fromLangchain(toLangchain(sampleHistory()));
-    const twice = fromLangchain(toLangchain(once));
-    assert.deepEqual(
-      twice.map((m) => ({ ...m, timestamp: 0 })),
-      once.map((m) => ({ ...m, timestamp: 0 })),
-    );
+    const once = roundTrip(sampleHistory());
+    assert.deepEqual(roundTrip(once), once);
   });
 });
