@@ -1,9 +1,22 @@
 # 阶段 ⑥ 测试迁移
 
-- 工时：2 人天
+- 工时：~~2 人天~~ → **已在阶段 ⑤ 内完成**
 - 前置：[⑤ Agent 运行时重写](05-agent-runtime-rewrite.md)
-- 可独立交付：❌ 否
+- **状态：已完成（2026-09-20），本文档转为记录**
 - 上级计划：[README.md](README.md)
+
+## -1. 为什么本阶段被阶段 ⑤ 吸收
+
+阶段 ⑤ 移除 `@langchain/*` 后，11 个依赖 langchain 测试替身的文件会**整体加载失败**，所以"⑤ 结束时 `npm test` 全绿"这一要求强制把本阶段的迁移一并做完了。
+
+实际做法与本文档的设想一致：
+
+- 共享替身收敛在 `packages/core/src/testing/fauxModelProvider.ts`，通过 **`@spotshell/core/testing` 子路径导出**（正是 3.2 节的建议），desktop 直接 `import { createFauxModelProvider, loadPiAi } from '@spotshell/core/testing'`
+- 该助手记录每次请求的 `systemPrompt` / `messages` / `toolNames`，取代原先各测试自己维护的 `receivedMessages`（3.3 节的问题因此不存在）
+- `registry.test.ts` 的断言对象从「传给 `ChatOpenAI` 构造函数的字段」改为 `resolveModel()` 返回的 `Model<Api>`（3.4 节）
+- 第 4 节要求的 6 项新行为测试，落在 `SpotShellAgent.eventContract.test.ts`
+
+**覆盖核对**：用例名全集 728 → 737，`SessionManager.v1Acceptance.test.ts` 的 5 个用例一个不少（第 6 节验收标准第 5 条）。详见 [05 的执行结果摘要](05-agent-runtime-rewrite.md)。
 
 ## 1. 目标
 

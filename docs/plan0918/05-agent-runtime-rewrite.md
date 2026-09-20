@@ -3,7 +3,45 @@
 - 工时：1.5 人天
 - 前置：[② 抽象层](02-agent-message-abstraction.md)、[③ TypeBox](03-tools-typebox.md)、[④ pi-ai Provider](04-providers-pi-ai.md)
 - 可独立交付：✅ 是（④ 已按其修正 2 独立交付，⑤ 不再需要与之捆绑）
+- **状态：已执行并验收通过（2026-09-20）**，改动留在工作区；真实 provider 对话与 GUI 冒烟待人工验证
 - 上级计划：[README.md](README.md)
+
+## -1. 执行结果摘要
+
+**LangChain / LangGraph 已从仓库彻底移除**（`grep -rn '@langchain' packages/` 零结果）。
+
+| 验收项 | 结果 |
+| --- | --- |
+| `npm run build` | exit 0 |
+| `npm test` | core **377/377**、desktop **321/321**，fail 0 |
+| `SessionManager.ts` diff | **空**（契约完全保持） |
+| 用例名全集 | 728 → 737，**零覆盖丢失**（5 处改名、2 处因 `createChatModel` API 移除而删除且等价覆盖已存在、16 处新增） |
+| ESM 内联不变量 | 五个纯 ESM 包 `require()` 计数全为 0 |
+| `npm run pack` | portable 105.0 MiB / NSIS 105.2 MiB |
+| `npm run dev:desktop` | 正常启动 |
+
+### 体积：本阶段最大的意外收益
+
+| | 阶段 ④ 后 | 阶段 ⑤ 后 | 差 |
+| --- | ---: | ---: | ---: |
+| `out/main/index.js` | 3,109,320 | **1,213,584** | **−1,895,736（−61%）** |
+| `out/main/chunks/` | 654,920（16 个） | 1,313,479（19 个） | +658,559 |
+| `out/main` 合计 | 3,764,240 | **2,527,063** | **−1,237,177（−33%）** |
+
+主进程启动路径瘦了六成：`@langchain/core`(764 KB) + `langsmith`(428 KB) + `@langchain/langgraph`(223 KB) + 两个 provider 适配器(194 KB) 全部消失，而 pi-ai 与 `openai` SDK 落在懒加载 chunk 里。安装包 109.3 → 110.1 MiB（asar 内仍带 pi-ai 的未用 SDK，见 [04 第 0.1 节](04-providers-pi-ai.md)）。
+
+### 事件契约的硬证据
+
+新增 `SpotShellAgent.eventContract.test.ts`，六条全绿：
+
+```
+✔ 纯文本轮：先 token 流后一个 final
+✔ 两个工具乱序完成，历史仍按源顺序
+✔ 取消抛 AgentCancelledError 且历史干净
+✔ provider 不发 text_delta 时仍补发一次 token 事件
+✔ 超长工具结果在同轮重入模型前被截断
+✔ provider 失败返回本地化文案且从不写历史
+```
 
 ## 0. 阶段 ④ 留给本阶段的四件事
 

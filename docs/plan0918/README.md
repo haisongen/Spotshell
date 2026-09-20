@@ -6,12 +6,36 @@
 - 本地参考仓库：`F:\myProjects\pi`（仅作 API 参考，依赖走 npm）
 - 预估总工时：**8.5~10 人天**（含 Electron 升级 0.5~1d）
 
-## 0. 已决策事项
+## 0. 迁移已完成 ✅
+
+**LangChain / LangGraph 已从仓库彻底移除**（2026-09-20）。`grep -rn '@langchain' packages/` 零结果。
+
+| 阶段 | 状态 | 关键产出 |
+| --- | --- | --- |
+| ⓪ Electron 升级 | ✅ 已提交 | 33.4.11 → 44.4.2（Node 20.18.3 → 24.21.0） |
+| ① ESM 迁移 | ✅ 已提交 | core/cli 转 ESM，顺带修掉既有的 `ERR_REQUIRE_ESM` 缺陷 |
+| ② 消息抽象层 | ✅ 已提交 | 自有 `AgentMessage` 判别联合，langchain 收敛到边界 |
+| ③ 工具 TypeBox | ✅ 已提交 | 14 个工具 schema 迁移，dump diff 证明零语义漂移 |
+| ④ Provider → pi-ai | ✅ 已提交 | `resolveModel` 接入 pi-ai，`createChatModel` 过渡保留 |
+| ⑤ 运行时重写 | ✅ 已提交 | pi `Agent` 取代 `StateGraph`，langchain 全部移除 |
+| ⑥ 测试迁移 | ✅ 并入 ⑤ | 见 [06 文档](06-test-migration.md) 的说明 |
+
+最终状态：`npm run build` exit 0；`npm test` **core 377/377、desktop 321/321 fail 0**；`SessionManager.ts` 全程零改动；用例名全集 **零覆盖丢失**；`out/main` 体积较迁移前**减少 33%**，主 bundle 减少 61%。
+
+### 已决策事项
 
 | 决策 | 结论 | 日期 |
 | --- | --- | --- |
 | Electron 是否升级 | ✅ **升级**，目标 `44.4.2`（Node 24.21.0），见 [00-electron-upgrade.md](00-electron-upgrade.md) | 2026-09-18 |
 | pi 依赖引入方式 | ✅ **npm 正式版**，锁定 `0.85.1`，不用 `^` | 2026-09-18 |
+
+### 遗留待办（不属本次迁移）
+
+1. **⚠️ `safeStorage` 同步 API 在 Electron 45 弃用、46 移除** —— `hostsStore.ts` / `settingsStore.ts` 用的正是这三个，下次大版本升级会编译不过。迁移不涉及数据迁移。见 [00 第 9.1 节](00-electron-upgrade.md)
+2. **Electron 44 取消了 postinstall 自动下载二进制** —— 干净环境 `npm install` 后 `node_modules/electron/dist/` 为空。见 [00 第 9.2 节](00-electron-upgrade.md)
+3. **安装包内含 pi-ai 的未用 SDK**（`@aws-sdk` / `@smithy` / `protobufjs`），JS 产物里为 0 但 asar 里仍在。可在 `electron-builder.yml` 的 `files` 加排除项。见 [04 第 0.1 节](04-providers-pi-ai.md)
+4. **扩 provider 白名单** —— pi-ai 支持 28+ 家，当前仍限 `openai` / `anthropic`。放开需改设置存储结构、IPC schema 与设置 UI，是独立需求
+5. **接入 thinking level** —— pi 原生支持，当前固定 `'off'`
 
 ## 1. 目标
 
