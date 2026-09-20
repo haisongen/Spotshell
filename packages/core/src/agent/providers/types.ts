@@ -1,5 +1,4 @@
 import type { Api, AssistantMessage, Model, Models } from '@earendil-works/pi-ai';
-import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 
 export type ModelProviderId = 'openai' | 'anthropic';
 
@@ -62,19 +61,14 @@ export interface ModelProvider {
   readonly id: ModelProviderId;
   readonly defaultModel: string;
   /**
-   * Transitional LangChain entry point. `SpotShellAgent` still runs on
-   * LangGraph and needs a `BaseChatModel`; it is removed once the agent
-   * executor moves to pi.
-   */
-  createChatModel(config: ModelProviderConfig): BaseChatModel;
-  /**
    * pi-ai entry point. Async because pi-ai is ESM-only with `import`-only
    * export conditions and is therefore loaded through `import()`; see
-   * `piModel.ts`. An invalid config (missing API key) still rejects/throws
-   * before any module is loaded.
+   * `piModel.ts`. An invalid config (missing API key) still throws
+   * synchronously, before any module is loaded, so callers can validate a new
+   * model selection without awaiting.
    */
   resolveModel(config: ModelProviderConfig): Promise<ResolvedModel>;
-  /** Normalizes a thrown value (LangChain / direct SDK paths). */
+  /** Normalizes a thrown value (model resolution / direct SDK paths). */
   normalizeError(error: unknown): ModelProviderErrorInfo;
   /** Normalizes a failed pi-ai `AssistantMessage` (pi-ai does not throw). */
   normalizeAssistantFailure(message: AssistantMessage): ModelProviderErrorInfo;

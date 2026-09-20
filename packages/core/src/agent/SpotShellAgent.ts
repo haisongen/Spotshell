@@ -1,8 +1,5 @@
-import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
-import { HumanMessage, AIMessage, SystemMessage, BaseMessage } from '@langchain/core/messages';
-import { StateGraph, MessagesAnnotation, START, END } from '@langchain/langgraph';
-import type { CompiledStateGraph } from '@langchain/langgraph';
-import { ToolNode } from '@langchain/langgraph/prebuilt';
+import type { Api, AssistantMessage, Message as PiMessage, Model } from '@earendil-works/pi-ai';
+import type { Agent as PiAgent, AgentTool, StreamFn } from '@earendil-works/pi-agent-core';
 import type {
   AgentConfig,
   SSHExecutor,
@@ -11,22 +8,25 @@ import type {
   AgentLanguage,
   AgentRuntime,
   AgentStreamEvent,
+  AgentToolDefinition,
 } from './types.js';
 import { createSSHTools, type SSHToolExtras } from './tools.js';
-import { capToolMessage, sanitizeToolCallHistory, trimHistoryToBudget } from './history.js';
+import { sanitizeToolCallHistory, trimHistoryToBudget } from './history.js';
 import {
-  isToolResult,
   messageText,
-  systemMessage,
   userMessage,
   type AgentMessage,
 } from './message.js';
 import {
-  fromLangchain,
-  sanitizeLangchainHistory,
-  toLangchain,
-  toLangchainTools,
-} from './langchainAdapter.js';
+  assistantText,
+  capToolResultContent,
+  fromPiMessages,
+  sanitizePiMessages,
+  toPiMessages,
+  toPiTools,
+  trimPiMessagesToBudget,
+  type PiAssistantOrigin,
+} from './piAdapter.js';
 import { buildSystemPrompt, buildContextMessage } from './prompt.js';
 import { resolveContextWindow } from './modelContext.js';
 import {
@@ -42,10 +42,37 @@ import {
 } from '../context/ContextCompaction.js';
 import type { KnowledgeProvenanceRecord } from '../knowledge/provenance.js';
 import { getModelProvider } from './providers/registry.js';
-import type { ModelProvider, ModelProviderConfig, ModelProviderId } from './providers/types.js';
+import type {
+  ModelProvider,
+  ModelProviderConfig,
+  ModelProviderErrorInfo,
+  ModelProviderId,
+  ResolvedModel,
+} from './providers/types.js';
 
 /** Conservative fixed reserve for bound tool schemas (names alone undercount). */
 const TOOLS_SCHEMA_RESERVE_CHARS = 3_000;
+
+/** Single tool result may not exceed this many characters in the transcript. */
+const TOOL_RESULT_MAX_CHARS = 2_000;
+
+/** Output ceiling for the synthesized model used when a stream function is injected. */
+const INJECTED_MAX_OUTPUT_TOKENS = 8_192;
+
+/**
+ * `@earendil-works/pi-agent-core` is ESM-only and declares an `import`-only
+ * export condition, exactly like pi-ai. Loading it through `import()` keeps the
+ * `@spotshell/core` barrel importable from CommonJS (the Electron main-process
+ * test runner) and keeps pi out of the main-process startup path.
+ */
+type PiAgentCore = typeof import('@earendil-works/pi-agent-core');
+
+let piAgentCore: Promise<PiAgentCore> | undefined;
+
+function loadPiAgentCore(): Promise<PiAgentCore> {
+  piAgentCore ??= import('@earendil-works/pi-agent-core');
+  return piAgentCore;
+}
 
 export type ContextCompactionSummarizer = (input: {
   messages: AgentMessage[];
@@ -54,7 +81,12 @@ export type ContextCompactionSummarizer = (input: {
 }) => Promise<string>;
 
 export interface SpotShellAgentDependencies {
-  model?: BaseChatModel;
+  /**
+   * Replaces the pi-ai stream function and skips provider model resolution
+   * entirely. Tests inject a `fauxProvider()`-backed function here so no
+   * credential, catalog, or network access is needed.
+   */
+  streamFn?: StreamFn;
   providerResolver?: (id: ModelProviderId) => ModelProvider;
   /** Injectable one-shot history summarizer (tests / alternate providers). */
   summarizer?: ContextCompactionSummarizer;
@@ -67,11 +99,23 @@ export class AgentCancelledError extends Error {
   }
 }
 
+/** Everything the turn loop needs to talk to a provider. */
+interface RuntimeModel {
+  model: Model<Api>;
+  streamFn: StreamFn;
+  /** Context window the pi-ai catalog reported, when it knew the model. */
+  providerContextWindow?: number;
+}
+
+function isAssistantMessage(message: PiMessage): message is AssistantMessage {
+  return message.role === 'assistant';
+}
+
 export class SpotShellAgent implements AgentRuntime {
-  private model: BaseChatModel;
   private executor: SSHExecutor;
-  private tools: ReturnType<typeof createSSHTools>;
-  private graph: CompiledStateGraph<any, any, any> | null = null;
+  private tools: AgentToolDefinition[];
+  private piTools: AgentTool<any>[];
+  private agent: PiAgent | null = null;
   private recursionLimit?: number;
   private conversationHistory: AgentMessage[] = [];
   /** Independent one-shot summaries; never re-fed into a later summary. */
@@ -80,16 +124,27 @@ export class SpotShellAgent implements AgentRuntime {
   private readonly systemPrompt: string;
   private readonly knowledgeAccess?: SSHToolExtras['knowledge'];
   private contextWindowTokens: number;
+  /** True once `updateContextWindow()` spoke; provider metadata must not override it. */
+  private contextWindowExplicit = false;
   private allowAutoContextCompaction: boolean;
   private modelName: string;
+  private modelConfig: AgentConfig;
   private provider: ModelProvider;
   private readonly providerResolver: (id: ModelProviderId) => ModelProvider;
+  private readonly injectedStreamFn?: StreamFn;
   private readonly summarizer: ContextCompactionSummarizer;
   private lastContextAssembly: ContextAssemblyResult | null = null;
   private guidanceRules: GuidanceRule[] = [];
   private catalogText?: string;
   private environmentText?: string;
   private referenceText?: string;
+  /** In-flight or settled provider resolution for the current model selection. */
+  private pendingResolution: Promise<ResolvedModel> | null = null;
+  private runtimeModel: RuntimeModel | null = null;
+  /** Outbound history budget for the turn currently running. */
+  private turnHistoryBudget = Number.POSITIVE_INFINITY;
+  /** LLM turns taken inside the run currently in flight; reset before every prompt. */
+  private turnCount = 0;
 
   constructor(
     config: AgentConfig,
@@ -105,6 +160,8 @@ export class SpotShellAgent implements AgentRuntime {
       knowledgeTools: Boolean(extras?.knowledge),
     });
     this.providerResolver = dependencies.providerResolver ?? getModelProvider;
+    this.injectedStreamFn = dependencies.streamFn;
+    this.modelConfig = config;
     this.provider = this.providerResolver(config.provider ?? 'openai');
     this.modelName = config.model?.trim() || this.provider.defaultModel;
     this.contextWindowTokens = resolveContextWindow({
@@ -112,14 +169,15 @@ export class SpotShellAgent implements AgentRuntime {
       model: this.modelName,
     });
     this.allowAutoContextCompaction = config.allowAutoContextCompaction !== false;
+    // Eager, like the old `createChatModel()` call: an unusable selection
+    // (missing API key, unknown provider) still fails at construction time.
+    this.pendingResolution = this.startModelResolution(config, this.provider, this.modelName);
 
-    this.model = dependencies.model ?? this.provider.createChatModel(
-      this.toProviderConfig(config, this.provider, this.modelName),
-    );
     this.summarizer = dependencies.summarizer
-      ?? ((input) => defaultCompactionSummarizer(this.model, input));
+      ?? ((input) => this.defaultCompactionSummarizer(input));
 
     this.tools = createSSHTools(executor, extras);
+    this.piTools = toPiTools(this.tools);
     this.knowledgeAccess = extras?.knowledge;
     this.recursionLimit = config.recursionLimit;
   }
@@ -144,6 +202,7 @@ export class SpotShellAgent implements AgentRuntime {
   /** Apply a new context window after model settings change. */
   updateContextWindow(contextWindowTokens: number): void {
     this.contextWindowTokens = Math.max(1, Math.floor(contextWindowTokens));
+    this.contextWindowExplicit = true;
   }
 
   /** Apply the model preference for automatic old-context compression. */
@@ -151,7 +210,15 @@ export class SpotShellAgent implements AgentRuntime {
     this.allowAutoContextCompaction = allow;
   }
 
-  /** Atomically replace the provider model while preserving all conversation state. */
+  /**
+   * Atomically replace the provider model while preserving all conversation state.
+   *
+   * Resolution itself is asynchronous (pi-ai is loaded on demand), so the new
+   * model only becomes usable on the next turn. The resolution is *started*
+   * here rather than deferred, which keeps the previous contract that an
+   * unusable selection — missing API key, unsupported provider id — is
+   * rejected synchronously and leaves every field below untouched.
+   */
   updateModel(config: AgentConfig): void {
     const provider = this.providerResolver(config.provider ?? 'openai');
     const modelName = config.model?.trim() || provider.defaultModel;
@@ -159,15 +226,17 @@ export class SpotShellAgent implements AgentRuntime {
       contextWindowTokens: config.contextWindowTokens,
       model: modelName,
     });
-    const nextModel = provider.createChatModel(this.toProviderConfig(config, provider, modelName));
+    const pendingResolution = this.startModelResolution(config, provider, modelName);
 
-    this.model = nextModel;
+    this.modelConfig = config;
     this.provider = provider;
     this.modelName = modelName;
     this.contextWindowTokens = contextWindowTokens;
+    this.contextWindowExplicit = false;
     this.allowAutoContextCompaction = config.allowAutoContextCompaction !== false;
     this.recursionLimit = config.recursionLimit;
-    this.graph = null;
+    this.pendingResolution = pendingResolution;
+    this.runtimeModel = null;
   }
 
   getCompactionSummaries(): CompactionSummaryRecord[] {
@@ -187,44 +256,106 @@ export class SpotShellAgent implements AgentRuntime {
     return this.assembleForTurn(currentRequest, context);
   }
 
-  private buildGraph(): CompiledStateGraph<any, any, any> {
-    if (!this.model.bindTools) {
-      throw new Error('Agent model must support tool binding');
+  /**
+   * Kick off provider model resolution. Returns `null` when a stream function
+   * was injected, because then no provider is involved at all.
+   */
+  private startModelResolution(
+    config: AgentConfig,
+    provider: ModelProvider,
+    modelName: string,
+  ): Promise<ResolvedModel> | null {
+    if (this.injectedStreamFn) return null;
+    const pending = provider.resolveModel(this.toProviderConfig(config, provider, modelName));
+    // The rejection is re-awaited by the next turn; swallow it here so an agent
+    // that is never used cannot crash the process with an unhandled rejection.
+    void pending.catch(() => undefined);
+    return pending;
+  }
+
+  private async ensureRuntimeModel(): Promise<RuntimeModel> {
+    if (this.runtimeModel) return this.runtimeModel;
+
+    if (this.injectedStreamFn) {
+      this.runtimeModel = { model: this.synthesizeInjectedModel(), streamFn: this.injectedStreamFn };
+      return this.runtimeModel;
     }
-    const langchainTools = toLangchainTools(this.tools);
-    const modelWithTools = this.model.bindTools(langchainTools);
 
-    // 定义 agent 节点
-    const callModel = async (state: typeof MessagesAnnotation.State) => {
-      const response = await modelWithTools.invoke(sanitizeLangchainHistory(state.messages));
-      return { messages: [response] };
+    this.pendingResolution ??= this.startModelResolution(
+      this.modelConfig,
+      this.provider,
+      this.modelName,
+    );
+    const resolved = await this.pendingResolution!;
+    if (!this.contextWindowExplicit) {
+      this.contextWindowTokens = resolveContextWindow({
+        contextWindowTokens: this.modelConfig.contextWindowTokens,
+        model: this.modelName,
+        providerContextWindow: resolved.providerContextWindow,
+      });
+    }
+    this.runtimeModel = {
+      model: resolved.model,
+      // pi-ai carries credentials and sampling knobs on the request, so they are
+      // spread in here once instead of being baked into the model description.
+      streamFn: (model, context, options) =>
+        resolved.models.streamSimple(model, context, { ...options, ...resolved.requestOptions }),
+      ...(resolved.providerContextWindow === undefined
+        ? {}
+        : { providerContextWindow: resolved.providerContextWindow }),
     };
+    return this.runtimeModel;
+  }
 
-    // 定义路由函数
-    const shouldContinue = (state: typeof MessagesAnnotation.State) => {
-      const lastMessage = state.messages[state.messages.length - 1];
-      if (lastMessage && 'tool_calls' in lastMessage) {
-        const aiMessage = lastMessage as AIMessage;
-        if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-          return 'tools';
-        }
-      }
-      return END;
-    };
+  /** Stand-in model description for an injected stream function. */
+  private synthesizeInjectedModel(): Model<Api> {
+    return {
+      id: this.modelName,
+      name: this.modelName,
+      api: 'openai-completions',
+      provider: this.provider.id,
+      baseUrl: '',
+      reasoning: false,
+      input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: this.contextWindowTokens,
+      maxTokens: Math.max(1, Math.min(INJECTED_MAX_OUTPUT_TOKENS, this.contextWindowTokens)),
+    } as Model<Api>;
+  }
 
-    // 构建图
-    const toolNode = new ToolNode(langchainTools);
-
-    const workflow = new StateGraph(MessagesAnnotation as any) as StateGraph<any, any, any>;
-
-    workflow
-      .addNode('agent', callModel)
-      .addNode('tools', toolNode)
-      .addEdge(START, 'agent')
-      .addConditionalEdges('agent', shouldContinue)
-      .addEdge('tools', 'agent');
-
-    return workflow.compile() as CompiledStateGraph<any, any, any>;
+  private async ensureAgent(): Promise<PiAgent> {
+    if (this.agent) return this.agent;
+    const runtime = await this.ensureRuntimeModel();
+    const { Agent } = await loadPiAgentCore();
+    this.agent = new Agent({
+      initialState: {
+        systemPrompt: this.systemPrompt,
+        model: runtime.model,
+        thinkingLevel: 'off',
+        tools: this.piTools,
+        messages: [],
+      },
+      // Always read the *current* runtime model; `updateModel()` swaps it out
+      // underneath without rebuilding the agent.
+      streamFn: (model, context, options) =>
+        (this.runtimeModel ?? runtime).streamFn(model, context, options),
+      // Drop tool batches the provider would reject, exactly as the LangGraph
+      // agent node did before every `invoke()`.
+      convertToLlm: (messages) => sanitizePiMessages(messages as PiMessage[]),
+      // Outbound-only soft trim; the local transcript is never reduced by it.
+      transformContext: async (messages) =>
+        trimPiMessagesToBudget(messages as PiMessage[], this.turnHistoryBudget),
+      afterToolCall: async ({ result }) => {
+        const capped = capToolResultContent(result.content, TOOL_RESULT_MAX_CHARS);
+        return capped ? { content: capped } : undefined;
+      },
+      // pi has no `recursionLimit`; count turns and stop gracefully instead.
+      shouldStopAfterTurn: async () => {
+        this.turnCount += 1;
+        return this.recursionLimit !== undefined && this.turnCount >= this.recursionLimit;
+      },
+    });
+    return this.agent;
   }
 
   async chatStream(
@@ -232,8 +363,19 @@ export class SpotShellAgent implements AgentRuntime {
     context: AgentContext,
     opts: ChatStreamOptions = {}
   ): Promise<string> {
-    const graph = this.graph ?? (this.graph = this.buildGraph());
     this.conversationHistory = sanitizeToolCallHistory(this.conversationHistory);
+
+    let agent: PiAgent;
+    let runtime: RuntimeModel;
+    try {
+      // Resolve first: the provider catalog may refine the context window the
+      // assembler below meters against.
+      runtime = await this.ensureRuntimeModel();
+      agent = await this.ensureAgent();
+    } catch (error) {
+      if (opts.signal?.aborted) throw new AgentCancelledError();
+      return this.describeFailure(this.provider.normalizeError(error));
+    }
 
     // Optionally compact older eligible history before the live turn.
     await this.maybeCompactHistory(userInput, context, opts.onEvent);
@@ -247,72 +389,115 @@ export class SpotShellAgent implements AgentRuntime {
     const fullHistory = this.conversationHistory;
     const history = trimHistoryToBudget(fullHistory, historyBudget);
     const turnUserMessage = userMessage(userInput);
-    const baseline: AgentMessage[] = [
-      systemMessage(this.systemPrompt),
-      systemMessage(contextMessage),
-      ...history,
-      turnUserMessage,
-    ];
-    // Single crossing into the LangGraph runtime; everything above is framework neutral.
-    const baselineMessages = toLangchain(baseline);
+    const origin = this.originOf(runtime.model);
 
-    try {
-      const stream = await graph.stream(
-        { messages: baselineMessages },
-        {
-          streamMode: ['values', 'messages'],
-          signal: opts.signal,
-          ...(this.recursionLimit ? { recursionLimit: this.recursionLimit } : {}),
-        }
-      );
+    // Single crossing into the pi runtime; everything above is framework neutral.
+    // pi 0.85.1 has no system role in the transcript, so the base prompt and the
+    // per-turn context block travel together in `systemPrompt`, replaced wholesale
+    // each turn instead of accumulating stale terminal snapshots.
+    agent.state.systemPrompt = `${this.systemPrompt}\n\n${contextMessage}`;
+    agent.state.model = runtime.model;
+    agent.state.thinkingLevel = 'off';
+    agent.state.tools = this.piTools;
+    agent.state.messages = toPiMessages(history, origin);
+    this.turnHistoryBudget = historyBudget;
+    this.turnCount = 0;
 
-      let lastValues: { messages: BaseMessage[] } | null = null;
-      for await (const [mode, chunk] of stream as AsyncIterable<[string, any]>) {
-        if (mode === 'messages') {
-          const [msgChunk, meta] = chunk as [any, { langgraph_node?: string }];
-          if (meta?.langgraph_node === 'agent'
-            && typeof msgChunk?.content === 'string'
-            && msgChunk.content) {
-            opts.onEvent?.({ type: 'token', text: msgChunk.content });
+    const promptMessage = toPiMessages([turnUserMessage], origin)[0]!;
+
+    let sawTextDelta = false;
+    let finalMessages: PiMessage[] = [];
+    const unsubscribe = agent.subscribe((event) => {
+      switch (event.type) {
+        case 'message_start':
+          if ((event.message as PiMessage).role === 'assistant') sawTextDelta = false;
+          break;
+        case 'message_update':
+          if (event.assistantMessageEvent.type === 'text_delta') {
+            const delta = event.assistantMessageEvent.delta;
+            if (delta) {
+              sawTextDelta = true;
+              opts.onEvent?.({ type: 'token', text: delta });
+            }
           }
-        } else if (mode === 'values') {
-          lastValues = chunk as { messages: BaseMessage[] };
+          break;
+        case 'message_end': {
+          // Fallback for providers that only deliver the full text at the end.
+          const message = event.message as PiMessage;
+          if (isAssistantMessage(message) && !sawTextDelta) {
+            const text = assistantText(message);
+            if (text) opts.onEvent?.({ type: 'token', text });
+          }
+          break;
         }
+        case 'agent_end':
+          finalMessages = event.messages as PiMessage[];
+          break;
       }
+    });
 
-      const finalMessages = lastValues?.messages ?? baselineMessages;
-      const lastMessage = finalMessages[finalMessages.length - 1];
-      let responseText = '';
-      if (lastMessage && AIMessage.isInstance(lastMessage)) {
-        responseText = typeof lastMessage.content === 'string'
-          ? lastMessage.content
-          : JSON.stringify(lastMessage.content);
-      }
-
-      const newMessages = fromLangchain(finalMessages.slice(baselineMessages.length))
-        .map((message) => (isToolResult(message) ? capToolMessage(message, 2000) : message));
-      // Persist the full active Agent history. Intentional reduction is only via
-      // one-shot compaction (or clearHistory / new context). Soft-trim above is
-      // outbound-only so we never silently drop unsummarized messages.
-      this.conversationHistory = sanitizeToolCallHistory([
-        ...fullHistory,
-        turnUserMessage,
-        ...newMessages,
-      ]);
-      const provenance = this.collectProvenance();
-      opts.onEvent?.({
-        type: 'final',
-        text: responseText,
-        ...(provenance.length > 0 ? { provenance } : {}),
-      });
-      return responseText;
-    } catch (error) {
+    const abortAgent = () => agent.abort();
+    opts.signal?.addEventListener('abort', abortAgent, { once: true });
+    try {
       if (opts.signal?.aborted) throw new AgentCancelledError();
-      const normalized = this.provider.normalizeError(error);
-      return this.language === 'en'
-        ? `AI processing error: ${normalized.message}`
-        : `AI 处理错误: ${normalized.message}`;
+      await agent.prompt(promptMessage);
+    } catch (error) {
+      if (error instanceof AgentCancelledError) throw error;
+      if (opts.signal?.aborted) throw new AgentCancelledError();
+      return this.describeFailure(this.provider.normalizeError(error));
+    } finally {
+      unsubscribe();
+      opts.signal?.removeEventListener('abort', abortAgent);
     }
+
+    // Decide cancellation *before* any history write-back so a half-finished
+    // assistant message can never contaminate `conversationHistory`.
+    const aborted = opts.signal?.aborted === true
+      || finalMessages.some((m) => isAssistantMessage(m) && m.stopReason === 'aborted');
+    if (aborted) throw new AgentCancelledError();
+
+    const failed = finalMessages.find(
+      (m): m is AssistantMessage => isAssistantMessage(m) && m.stopReason === 'error',
+    );
+    if (failed) {
+      // Same as the LangGraph path: a failed request is reported as an ordinary
+      // assistant reply, and nothing is written back to the history.
+      return this.describeFailure(this.provider.normalizeAssistantFailure(failed));
+    }
+
+    // Difference by identity against the prompt we injected. pi returns only the
+    // messages produced by this run, so no baseline length arithmetic is involved.
+    const produced = finalMessages.filter((message) => message !== promptMessage);
+    const newMessages = fromPiMessages(produced);
+    // Persist the full active Agent history. Intentional reduction is only via
+    // one-shot compaction (or clearHistory / new context). Soft-trim above is
+    // outbound-only so we never silently drop unsummarized messages.
+    this.conversationHistory = sanitizeToolCallHistory([
+      ...fullHistory,
+      turnUserMessage,
+      ...newMessages,
+    ]);
+
+    const lastAssistant = [...produced].reverse().find(isAssistantMessage);
+    const responseText = lastAssistant ? assistantText(lastAssistant) : '';
+    const provenance = this.collectProvenance();
+    opts.onEvent?.({
+      type: 'final',
+      text: responseText,
+      ...(provenance.length > 0 ? { provenance } : {}),
+    });
+    return responseText;
+  }
+
+  /** Localized, credential-free rendering of a provider failure. */
+  private describeFailure(info: ModelProviderErrorInfo): string {
+    return this.language === 'en'
+      ? `AI processing error: ${info.message}`
+      : `AI 处理错误: ${info.message}`;
+  }
+
+  private originOf(model: Model<Api>): PiAssistantOrigin {
+    return { api: model.api, provider: model.provider, model: model.id };
   }
 
   private async maybeCompactHistory(
@@ -501,6 +686,46 @@ export class SpotShellAgent implements AgentRuntime {
     return harness ? harness.takeProvenance() : [];
   }
 
+  /**
+   * One-shot summarization through the same stream function the turn loop uses.
+   * Deliberately tool-free and history-free: the transcript is the only input.
+   */
+  private async defaultCompactionSummarizer(input: {
+    messages: AgentMessage[];
+    modelName: string;
+    language: AgentLanguage;
+  }): Promise<string> {
+    const runtime = await this.ensureRuntimeModel();
+    const transcript = input.messages.map((message) => {
+      const role = message.role === 'toolResult' ? 'tool' : message.role;
+      return `${role}: ${messageText(message)}`;
+    }).join('\n\n');
+
+    const instruction = input.language === 'en'
+      ? [
+          'Summarize the following earlier conversation and completed tool outputs for continuity.',
+          'Keep facts, open questions, decisions, and unresolved tasks.',
+          'Do not invent knowledge, host facts, or command success.',
+          'Return only the summary text.',
+        ].join(' ')
+      : [
+          '请将以下较早对话与已完成的工具输出压缩为连续摘要。',
+          '保留事实、未决问题、决策与未完成任务。',
+          '不要编造知识、主机事实或命令成功结论。',
+          '只返回摘要正文。',
+        ].join('');
+
+    const stream = await runtime.streamFn(runtime.model, {
+      systemPrompt: instruction,
+      messages: [{ role: 'user', content: transcript, timestamp: Date.now() }],
+    });
+    const message = await stream.result();
+    if (message.stopReason === 'error' || message.stopReason === 'aborted') {
+      throw new Error(this.provider.normalizeAssistantFailure(message).message);
+    }
+    return assistantText(message);
+  }
+
   private toProviderConfig(
     config: AgentConfig,
     provider: ModelProvider,
@@ -515,40 +740,4 @@ export class SpotShellAgent implements AgentRuntime {
       temperature: config.temperature ?? 0.1,
     };
   }
-}
-
-async function defaultCompactionSummarizer(
-  model: BaseChatModel,
-  input: {
-    messages: AgentMessage[];
-    modelName: string;
-    language: AgentLanguage;
-  },
-): Promise<string> {
-  const transcript = input.messages.map((message) => {
-    const role = message.role === 'toolResult' ? 'tool' : message.role;
-    return `${role}: ${messageText(message)}`;
-  }).join('\n\n');
-
-  const instruction = input.language === 'en'
-    ? [
-        'Summarize the following earlier conversation and completed tool outputs for continuity.',
-        'Keep facts, open questions, decisions, and unresolved tasks.',
-        'Do not invent knowledge, host facts, or command success.',
-        'Return only the summary text.',
-      ].join(' ')
-    : [
-        '请将以下较早对话与已完成的工具输出压缩为连续摘要。',
-        '保留事实、未决问题、决策与未完成任务。',
-        '不要编造知识、主机事实或命令成功结论。',
-        '只返回摘要正文。',
-      ].join('');
-
-  const response = await model.invoke([
-    new SystemMessage(instruction),
-    new HumanMessage(transcript),
-  ]);
-  return typeof response.content === 'string'
-    ? response.content
-    : JSON.stringify(response.content);
 }

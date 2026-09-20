@@ -95,32 +95,45 @@ export function sanitizeToolCallHistory(messages: readonly AgentMessage[]): Agen
   return sanitizeToolCallIndices(messages).map((index) => messages[index]!);
 }
 
+/**
+ * Indices of the messages that survive sanitization *and* budget trimming, in
+ * order. Exposed alongside `trimHistoryToBudget` for the same reason as
+ * `sanitizeToolCallIndices`: a caller holding framework-native messages (the pi
+ * adapter) can apply the identical decision without rebuilding its own objects,
+ * so provider-specific fields survive the round trip untouched.
+ */
+export function trimHistoryIndicesToBudget(
+  messages: readonly AgentMessage[],
+  budgetTokens: number,
+): number[] {
+  const validIndices = sanitizeToolCallIndices(messages);
+  if (validIndices.length === 0) return [];
+
+  const groups: number[][] = [];
+  let current: number[] = [];
+  for (const index of validIndices) {
+    if (isUser(messages[index]!) && current.length > 0) {
+      groups.push(current);
+      current = [];
+    }
+    current.push(index);
+  }
+  if (current.length > 0) groups.push(current);
+
+  const groupTokens = (group: readonly number[]): number =>
+    group.reduce((sum, index) => sum + estimateTokens(messages[index]!), 0);
+
+  let total = groups.reduce((sum, group) => sum + groupTokens(group), 0);
+  while (groups.length > 1 && total > budgetTokens) {
+    total -= groupTokens(groups.shift()!);
+  }
+
+  return groups.flat();
+}
+
 export function trimHistoryToBudget(
   messages: readonly AgentMessage[],
   budgetTokens: number,
 ): AgentMessage[] {
-  const validMessages = sanitizeToolCallHistory(messages);
-  if (validMessages.length === 0) return [];
-
-  const groups: AgentMessage[][] = [];
-  let current: AgentMessage[] = [];
-  for (const message of validMessages) {
-    if (isUser(message) && current.length > 0) {
-      groups.push(current);
-      current = [];
-    }
-    current.push(message);
-  }
-  if (current.length > 0) groups.push(current);
-
-  let total = groups.reduce(
-    (sum, group) => sum + group.reduce((groupSum, message) => groupSum + estimateTokens(message), 0),
-    0
-  );
-  while (groups.length > 1 && total > budgetTokens) {
-    const removed = groups.shift()!;
-    total -= removed.reduce((sum, message) => sum + estimateTokens(message), 0);
-  }
-
-  return groups.flat();
+  return trimHistoryIndicesToBudget(messages, budgetTokens).map((index) => messages[index]!);
 }

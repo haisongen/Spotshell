@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
     }
   },
   "scripts": {
@@ -16,11 +20,8 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-agent-core": "0.85.1",
     "@earendil-works/pi-ai": "0.85.1",
-    "@langchain/anthropic": "^1.5.5",
-    "@langchain/core": "^1.0.1",
-    "@langchain/langgraph": "1.0.15",
-    "@langchain/openai": "^1.2.3",
     "mdast-util-to-string": "^4.0.0",
     "remark-frontmatter": "^5.0.0",
     "remark-parse": "^11.0.0",

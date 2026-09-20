@@ -55,12 +55,21 @@ export function normalizeContextWindow(value: unknown): number | undefined {
 /**
  * Priority:
  * 1. the value the user configured explicitly,
- * 2. the context window the provider catalog reports for the model,
- * 3. the local prefill table (the only source on a custom base URL),
+ * 2. the local prefill table,
+ * 3. the context window the provider catalog reports for the model,
  * 4. `DEFAULT_CONTEXT_WINDOW`.
  *
  * Every candidate passes the same `CONTEXT_WINDOW_MIN`/`MAX` validation, so an
  * out-of-range provider value falls through instead of being trusted.
+ *
+ * The prefill table deliberately outranks the provider catalog. A catalog entry
+ * describes the model's *maximum* window, including windows that are only
+ * reachable with an opt-in request header — `claude-sonnet-4-5` is listed at
+ * 1,000,000 tokens, but that window needs the `context-1m-2025-08-07` beta and
+ * the effective window is 200,000 without it. SpotShell never sends that
+ * header, so trusting the catalog there would let the context assembler pack a
+ * request the provider then rejects. The catalog is still consulted for models
+ * the prefill table does not know, where it beats a blind default.
  */
 export function resolveContextWindow(options: {
   contextWindowTokens?: number;
@@ -69,9 +78,11 @@ export function resolveContextWindow(options: {
 }): number {
   const explicit = normalizeContextWindow(options.contextWindowTokens);
   if (explicit !== undefined) return explicit;
+  const known = lookupKnownModelContextWindow(options.model);
+  if (known !== undefined) return known;
   const fromProvider = normalizeContextWindow(options.providerContextWindow);
   if (fromProvider !== undefined) return fromProvider;
-  return lookupKnownModelContextWindow(options.model) ?? DEFAULT_CONTEXT_WINDOW;
+  return DEFAULT_CONTEXT_WINDOW;
 }
 
 export function listKnownModelContextWindows(): ReadonlyArray<{ model: string; tokens: number }> {
