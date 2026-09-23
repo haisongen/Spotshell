@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { HOST_TIERS } from './hostTier'
 
 const nonEmptyString = z.string().min(1)
 const port = z.number().int().min(1).max(65535)
@@ -401,6 +402,7 @@ export const savedHostInputSchema = z.object({
   notes: z.string().max(4000).optional(),
   folderId: optionalHostFolderId,
   environmentId: knowledgeIdSchema.optional(),
+  tier: z.enum(HOST_TIERS).optional(),
 }).strict()
 
 export const savedHostPatchSchema = savedHostInputSchema.partial()

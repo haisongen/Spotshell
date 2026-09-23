@@ -1,6 +1,7 @@
 import { splitCodeBlocks } from '../../shared/chatSegments'
 import type { KnowledgeProvenanceRecord } from '../../shared/ipc-types'
 import { useTranslation } from '../i18n'
+import { MarkdownText } from './MarkdownText'
 
 interface AssistantMessageProps {
   content: string
@@ -55,7 +56,7 @@ export function AssistantMessage({
     <div className="assistant-message">
       {segments.map((segment, index) =>
         segment.type === 'text' ? (
-          <pre key={index} className="chat-bubble-body">{segment.content}</pre>
+          <MarkdownText key={index} source={segment.content} />
         ) : (
           <div key={index} className="command-block">
             <pre className="command-block-code">{segment.content}</pre>

@@ -5,10 +5,14 @@ import type {
   KnowledgeTargetApprovalItem,
 } from '../chatApprovals'
 import { useTranslation } from '../i18n'
+import type { SessionTarget } from '../hostTierView'
+import { TierBadge } from './TierBadge'
 import { UnifiedDiffView } from './UnifiedDiffView'
 
 interface ChatApprovalCardProps {
   item: ApprovalItem
+  /** Session the approved action runs against. */
+  target?: SessionTarget | null
   responding?: boolean
   onRespond: (item: ApprovalItem, approved: boolean, options?: ApprovalRespondOptions) => void
 }
@@ -25,7 +29,12 @@ export interface ApprovalRespondOptions extends KnowledgeProposalRespondOptions 
   optionIndex?: number
 }
 
-export function ChatApprovalCard({ item, responding = false, onRespond }: ChatApprovalCardProps): JSX.Element {
+export function ChatApprovalCard({
+  item,
+  target = null,
+  responding = false,
+  onRespond,
+}: ChatApprovalCardProps): JSX.Element {
   if (item.kind === 'knowledge-proposal') {
     return (
       <KnowledgeProposalCard
@@ -46,6 +55,20 @@ export function ChatApprovalCard({ item, responding = false, onRespond }: ChatAp
     )
   }
 
+  return <HostActionCard item={item} target={target} responding={responding} onRespond={onRespond} />
+}
+
+function HostActionCard({
+  item,
+  target,
+  responding,
+  onRespond,
+}: {
+  item: Exclude<ApprovalItem, KnowledgeProposalApprovalItem | KnowledgeTargetApprovalItem>
+  target: SessionTarget | null
+  responding: boolean
+  onRespond: (item: ApprovalItem, approved: boolean, options?: ApprovalRespondOptions) => void
+}): JSX.Element {
   const { t } = useTranslation()
   const pending = item.status === 'pending'
   const destructive = item.kind === 'command-approval' && item.risk === 'destructive'
@@ -56,18 +79,33 @@ export function ChatApprovalCard({ item, responding = false, onRespond }: ChatAp
     ? t('noteProposalHint')
     : t(destructive ? 'dangerousCommandHint' : 'writeCommandHint')
   const status = statusLabel(t, item.status)
+  // Highlight only while a decision is due; settled cards fall back to the resolved style.
+  const onProduction = pending && item.kind === 'command-approval' && target?.tier === 'production'
 
   return (
     <section
       className={`chat-approval-card chat-approval-${
         item.kind === 'note-approval' ? 'note' : item.risk
-      }${pending ? '' : ' chat-approval-resolved'}`}
+      }${onProduction ? ' chat-approval-on-production' : ''}${pending ? '' : ' chat-approval-resolved'}`}
       aria-label={title}
     >
       <div className="chat-approval-heading">
         <strong>{title}</strong>
         <span className="chat-approval-status" role="status">{status}</span>
       </div>
+      {target ? (
+        <p className="chat-approval-host">
+          <span className="chat-approval-host-label">{t('approvalTarget')}</span>
+          <TierBadge tier={target.tier} />
+          <span className="chat-approval-host-name">{target.title}</span>
+          {target.address && target.address !== target.title ? (
+            <span className="chat-approval-host-address">{target.address}</span>
+          ) : null}
+        </p>
+      ) : null}
+      {onProduction ? (
+        <p className="chat-approval-production-warning" role="note">{t('approvalProductionWarning')}</p>
+      ) : null}
       <p className="chat-approval-hint">{hint}</p>
       <pre className="chat-approval-content">
         {item.kind === 'command-approval' ? item.command : item.note}

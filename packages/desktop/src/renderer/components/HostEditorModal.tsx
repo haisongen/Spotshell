@@ -14,6 +14,7 @@ import {
   type HostFormValidationError,
 } from '../hostManagement'
 import { useTranslation } from '../i18n'
+import { HOST_TIERS, hostTierLabelKey, isHostTier } from '../hostTierView'
 
 export type HostEditorMode = 'create' | 'edit'
 
@@ -331,6 +332,21 @@ export function HostEditorModal({
                 <option key={environment.id} value={environment.id}>{environment.name}</option>
               ))}
             </select>
+          </label>
+
+          <label className="field">
+            <span>{t('hostTier')}</span>
+            <select
+              value={form.tier ?? ''}
+              onChange={(event) => update('tier', isHostTier(event.target.value) ? event.target.value : undefined)}
+              disabled={busy}
+            >
+              <option value="">{t('hostTierNone')}</option>
+              {HOST_TIERS.map((tier) => (
+                <option key={tier} value={tier}>{t(hostTierLabelKey(tier))}</option>
+              ))}
+            </select>
+            <small className="field-hint">{t('hostTierHint')}</small>
           </label>
 
           <label className="field">

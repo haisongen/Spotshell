@@ -264,6 +264,16 @@ test('clipboardTextSchema accepts text including an empty string', () => {
   assert.equal(clipboardTextSchema.safeParse({ text: 'wrong shape' }).success, false)
 })
 
+test('savedHostInputSchema accepts known tiers only', () => {
+  const base = { name: 'a', host: 'h', port: 22, username: 'u' }
+  for (const tier of ['production', 'staging', 'testing', 'development']) {
+    assert.ok(savedHostInputSchema.safeParse({ ...base, tier }).success, tier)
+  }
+  for (const tier of ['prod', 'PRODUCTION', '', 1, null]) {
+    assert.equal(savedHostInputSchema.safeParse({ ...base, tier }).success, false)
+  }
+})
+
 test('savedHostInputSchema accepts notes and bounds their length', () => {
   assert.ok(
     savedHostInputSchema.safeParse({

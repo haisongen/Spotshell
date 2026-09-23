@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -43,13 +44,15 @@ import { ChatPanel } from './components/ChatPanel'
 import { QuickConnectForm } from './components/QuickConnectForm'
 import { ConnectionModal } from './components/ConnectionModal'
 import { HostVerifyDialog } from './components/HostVerifyDialog'
-import { HostNotesEditor } from './components/HostNotesEditor'
+import { HostDetail } from './components/HostDetail'
 import { AppNoticeBanner, type AppNotice } from './components/AppNoticeBanner'
 import { AppTitleBar } from './components/AppTitleBar'
 import { KnowledgeWorkspace } from './components/KnowledgeWorkspace'
 import { useSessions } from './hooks/useSessions'
 import { useTranslation } from './i18n'
 import { closeMatchingHostVerify } from './hostVerifyState'
+import { describeSessionTarget, hostTierClass } from './hostTierView'
+import { summarizeHostSessions } from './hostSessionStatus'
 import { getNextTheme } from './theme'
 import {
   createCloseOtherSessionsSnapshot,
@@ -752,6 +755,9 @@ export function App(): JSX.Element {
 
   const selected = hosts?.find((h) => h.id === selectedId) ?? null
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null
+  const activeTarget = describeSessionTarget(activeSession, hosts)
+  const hostSessionStatus = useMemo(() => summarizeHostSessions(sessions), [sessions])
+  const activeTier = activeTarget?.tier
   const showTerminal = sessions.length > 0
   const activeHasApiKey = settings
     ? settings.model.providers[settings.model.activeProvider].hasApiKey
@@ -820,6 +826,7 @@ export function App(): JSX.Element {
                 selectedId={selectedId}
                 testingHostId={testingHostId}
                 connectingHostIds={busyHostIds}
+                hostSessionStatus={hostSessionStatus}
                 onSelect={(h) => setSelectedId(h.id)}
                 onConnect={(h) => {
                   void handleConnect(h)
@@ -886,9 +893,10 @@ export function App(): JSX.Element {
           ) : null}
 
           {showTerminal ? (
-            <div className="session-workspace">
+            <div className={`session-workspace${activeTier ? ` ${hostTierClass(activeTier)}` : ''}`}>
               <SessionTabs
                 sessions={sessions}
+                hosts={hosts}
                 activeSessionId={activeSessionId}
                 onSelect={setActiveSessionId}
                 onClose={(id) => {
@@ -920,33 +928,21 @@ export function App(): JSX.Element {
               />
             </div>
           ) : selected ? (
-            <div className="empty-main">
-              <h2>{selected.name}</h2>
-              <p className="muted">
-                {selected.username}@{selected.host}:{selected.port}
-              </p>
-              <p className="hint">{t('openTerminalHint')}</p>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={busyHostIds.has(selected.id)}
-                onClick={() => {
-                  void handleConnect(selected)
-                }}
-              >
-                {busyHostIds.has(selected.id) ? t('connecting') : t('connect')}
-              </button>
-              <HostNotesEditor
-                host={selected}
-                onSaved={async () => {
-                  await refreshHosts()
-                }}
-              />
-              <div className="empty-divider">
-                <span>{t('orQuickConnect')}</span>
-              </div>
-              <QuickConnectForm onConnect={handleQuickConnect} />
-            </div>
+            <HostDetail
+              host={selected}
+              folders={folders}
+              environments={environments}
+              connecting={busyHostIds.has(selected.id)}
+              onConnect={(host) => { void handleConnect(host) }}
+              onEdit={openEditHost}
+              onQuickConnect={() => {
+                setConnectionHost(null)
+                setConnectionOpen(true)
+              }}
+              onNotesSaved={async () => {
+                await refreshHosts()
+              }}
+            />
           ) : (
             <div className="empty-main">
               <QuickConnectForm onConnect={handleQuickConnect} />
@@ -988,6 +984,7 @@ export function App(): JSX.Element {
           onPendingCountChange={setChatPendingCount}
           sessionReady={activeSession?.status === 'ready'}
           session={activeSession ?? null}
+          target={activeTarget}
           environments={environments}
           modules={knowledgeModules}
           onEnvironmentSelect={(environmentId, persistForHost) => activeSessionId

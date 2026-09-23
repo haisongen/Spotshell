@@ -41,6 +41,7 @@ const validForm: HostEditorFormValues = {
   password: '',
   notes: ' production ',
   environmentId: 'env-prod',
+  tier: 'production',
 }
 
 test('formats a host target', () => {
@@ -73,6 +74,7 @@ test('converts and trims valid form values', () => {
       password: undefined,
       notes: 'production',
       environmentId: 'env-prod',
+      tier: 'production',
     },
   })
 })
@@ -141,6 +143,7 @@ test('creates editor state without exposing a stored password', () => {
     password: '',
     notes: '',
     environmentId: undefined,
+    tier: undefined,
   })
 })
 
@@ -149,6 +152,12 @@ test('editor state preserves and can clear an automatic environment binding', ()
   assert.equal(hostToEditorForm(boundHost).environmentId, 'env-prod')
   const result = convertHostForm({ ...validForm, environmentId: undefined })
   assert.equal(result.ok && result.input.environmentId, undefined)
+})
+
+test('editor state preserves and can clear a host tier', () => {
+  assert.equal(hostToEditorForm({ ...hosts[0], tier: 'staging' }).tier, 'staging')
+  const result = convertHostForm({ ...validForm, tier: undefined })
+  assert.equal(result.ok && result.input.tier, undefined)
 })
 
 test('infers password auth for legacy saved hosts that only expose hasPassword', () => {

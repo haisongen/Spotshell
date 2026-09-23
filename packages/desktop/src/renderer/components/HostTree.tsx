@@ -15,10 +15,12 @@ import {
   type HostTreeFolderNode,
 } from '../hostTree'
 import { useTranslation } from '../i18n'
+import { hostSessionStatusKey, type HostSessionStatus } from '../hostSessionStatus'
 import { ConfirmDeleteFolderModal } from './ConfirmDeleteFolderModal'
 import { FolderContextMenu } from './FolderContextMenu'
 import { HostContextMenu } from './HostContextMenu'
 import { MoveHostModal } from './MoveHostModal'
+import { TierBadge } from './TierBadge'
 
 const EXPANDED_STORAGE_KEY = 'spotshell.hostTree.expanded'
 const MAX_FOLDER_NAME_LENGTH = 100
@@ -29,6 +31,8 @@ interface HostTreeProps {
   selectedId: string | null
   testingHostId?: string | null
   connectingHostIds?: ReadonlySet<string>
+  /** Status of each saved host's open sessions; absent hosts have none. */
+  hostSessionStatus?: ReadonlyMap<string, HostSessionStatus>
   onSelect: (host: SavedHostProfile) => void
   onConnect: (host: SavedHostProfile) => void
   onAddHost: (folderId?: string) => void
@@ -341,6 +345,7 @@ export function HostTree(props: HostTreeProps): JSX.Element {
               const selected = props.selectedId === host.id
               const connecting = props.connectingHostIds?.has(host.id) ?? false
               const dragging = draggedHostId === host.id
+              const sessionStatus = props.hostSessionStatus?.get(host.id)
               return (
                 <li key={host.id} role={'none'} className={'host-tree-item'}>
                   <div role={'treeitem'} tabIndex={0} aria-level={depth + 1} aria-selected={selected}
@@ -380,6 +385,12 @@ export function HostTree(props: HostTreeProps): JSX.Element {
                       clearHoverTimer()
                     }}>
                     <span className={'host-tree-host-name'}>{host.name}</span>
+                    {sessionStatus ? (
+                      <span className={`session-status ${sessionStatus}`} role={'img'}
+                        aria-label={t(hostSessionStatusKey(sessionStatus))}
+                        title={t(hostSessionStatusKey(sessionStatus))} />
+                    ) : null}
+                    <TierBadge tier={host.tier} compact />
                     <div className={'host-tree-host-actions'}>
                       <button type={'button'} className={'host-connect-button'} disabled={connecting}
                         onClick={(event) => { event.stopPropagation(); props.onConnect(host) }}>

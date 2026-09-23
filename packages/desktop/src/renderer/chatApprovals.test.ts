@@ -5,6 +5,7 @@ import {
   applyApprovalResponse,
   closeSessionApprovals,
   countPendingApprovals,
+  hasPendingApproval,
   isApprovalItem,
   markKnowledgeTargetChoice,
   resolveApproval,
@@ -36,6 +37,15 @@ test('a knowledge-target card is a first-class approval and closes with the sess
   const closed = closeSessionApprovals(state, 'one', 'cancelled')
   assert.equal((closed.one?.[0] as ApprovalItem).status, 'cancelled')
   assert.equal(countPendingApprovals(closed), 0)
+})
+
+test('hasPendingApproval only counts cards still waiting on the user', () => {
+  const chat = { id: 'm1', role: 'assistant', content: 'hi' }
+  assert.equal(hasPendingApproval([]), false)
+  assert.equal(hasPendingApproval([chat]), false)
+  assert.equal(hasPendingApproval([chat, command]), true)
+  assert.equal(hasPendingApproval([{ ...command, status: 'approved' }]), false)
+  assert.equal(hasPendingApproval([{ ...command, status: 'rejected' }, note]), true)
 })
 
 test('marking the chosen landing place leaves other cards untouched', () => {

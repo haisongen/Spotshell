@@ -127,14 +127,21 @@ export function closeSessionApprovals<T>(
   }
 }
 
+function isAwaitingUser(item: unknown): boolean {
+  return isApprovalItem(item)
+    && (item.status === 'pending' || item.status === 'conflict' || item.status === 'validation-failed')
+}
+
 export function countPendingApprovals<T>(itemsBySession: SessionItems<T | ApprovalItem>): number {
   return Object.values(itemsBySession).reduce(
-    (total, items) => total + items.filter((item) =>
-      isApprovalItem(item)
-      && (item.status === 'pending' || item.status === 'conflict' || item.status === 'validation-failed')
-    ).length,
+    (total, items) => total + items.filter(isAwaitingUser).length,
     0
   )
+}
+
+/** True when a card in this transcript is already asking the user to decide. */
+export function hasPendingApproval(items: ReadonlyArray<unknown>): boolean {
+  return items.some(isAwaitingUser)
 }
 
 export function isApprovalItem(value: unknown): value is ApprovalItem {

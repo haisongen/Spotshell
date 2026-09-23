@@ -1,9 +1,13 @@
-import type { SessionSummary } from '../../shared/ipc-types'
+import type { SavedHostProfile, SessionSummary } from '../../shared/ipc-types'
 import { useTranslation } from '../i18n'
 import { connectionErrorTranslationKey } from '../sessionConnectionState'
+import { hostTierClass, hostTierLabelKey, sessionTier } from '../hostTierView'
+import { TierBadge } from './TierBadge'
 
 interface SessionTabsProps {
   sessions: SessionSummary[]
+  /** Saved hosts, used to show each session's tier. */
+  hosts?: ReadonlyArray<Pick<SavedHostProfile, 'id' | 'tier'>> | null
   activeSessionId: string | null
   onSelect: (sessionId: string) => void
   onClose: (sessionId: string) => void
@@ -32,6 +36,7 @@ function statusDotClass(status: SessionSummary['status']): string {
 
 export function SessionTabs({
   sessions,
+  hosts,
   activeSessionId,
   onSelect,
   onClose,
@@ -45,14 +50,17 @@ export function SessionTabs({
     <div className="session-tabs" role="tablist" aria-label={t('sessions')}>
       {sessions.map((session) => {
         const active = session.id === activeSessionId
-        const statusTitle =
+        const tier = sessionTier(session, hosts)
+        const baseTitle =
           session.status === 'error'
             ? t(connectionErrorTranslationKey(session.errorKind))
             : session.title
+        const statusTitle = tier ? `${baseTitle}
+${t('hostTier')}: ${t(hostTierLabelKey(tier))}` : baseTitle
         return (
           <div
             key={session.id}
-            className={`session-tab${active ? ' active' : ''}`}
+            className={`session-tab${active ? ' active' : ''}${tier ? ` ${hostTierClass(tier)}` : ''}`}
             role="tab"
             aria-selected={active}
             tabIndex={active ? 0 : -1}
@@ -78,6 +86,7 @@ export function SessionTabs({
             <span className="session-tab-title" title={statusTitle}>
               {session.title}
             </span>
+            <TierBadge tier={tier} compact />
             <button
               type="button"
               className="session-tab-close"

@@ -29,6 +29,7 @@ import {
   appendApproval,
   closeSessionApprovals,
   countPendingApprovals,
+  hasPendingApproval,
   isApprovalItem,
   markKnowledgeTargetChoice,
   resolveApproval,
@@ -47,8 +48,15 @@ import { ChatApprovalCard } from './ChatApprovalCard'
 import { ChatHeaderOverflowMenu } from './ChatHeaderOverflowMenu'
 import { ChatContextBar } from './ChatContextBar'
 import { ToolCard } from './ToolCard'
+import { TierBadge } from './TierBadge'
+import type { SessionTarget } from '../hostTierView'
 
 const COMPACT_HEADER_WIDTH = 480
+const CHAT_SUGGESTION_KEYS = [
+  'chatSuggestionMemory',
+  'chatSuggestionLastCommand',
+  'chatSuggestionHealth',
+] as const
 
 type ChatRole = 'user' | 'assistant' | 'system' | 'tool'
 
@@ -91,6 +99,8 @@ interface ChatPanelProps {
   onHostNotesSaved: () => void
   sessionReady: boolean
   session: SessionSummary | null
+  /** Who the active session talks to; shown on command approvals. */
+  target?: SessionTarget | null
   environments: EnvironmentSummary[]
   modules: KnowledgeModuleAccessSummary[]
   onEnvironmentSelect: (environmentId: string | undefined, persistForHost: boolean) => Promise<void>
@@ -139,6 +149,7 @@ export function ChatPanel({
   onHostNotesSaved,
   sessionReady,
   session,
+  target = null,
   environments,
   modules,
   onEnvironmentSelect,
@@ -901,6 +912,7 @@ export function ChatPanel({
       <div className={`chat-panel-header${compactHeader ? ' chat-panel-header-compact' : ''}`}>
         <div className="rail-heading">
           <h2>{t('aiChat')}</h2>
+          {session ? <TierBadge tier={target?.tier} /> : null}
         </div>
         <div className="chat-panel-actions">
           {compactHeader ? (
@@ -984,14 +996,26 @@ export function ChatPanel({
         <>
           <div className="chat-messages" ref={listRef}>
             {messages.length === 0 ? (
-              <p className="muted chat-placeholder">
-                {t('chatPlaceholder')}
-              </p>
+              <div className="chat-suggestions">
+                <p className="muted chat-placeholder">{t('chatSuggestionsTitle')}</p>
+                {CHAT_SUGGESTION_KEYS.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className="chat-suggestion"
+                    disabled={busy}
+                    onClick={() => { void sendMessage(t(key)) }}
+                  >
+                    {t(key)}
+                  </button>
+                ))}
+              </div>
             ) : (
               messages.map((m) => isApprovalItem(m) ? (
                 <ChatApprovalCard
                   key={m.id}
                   item={m}
+                  target={target}
                   responding={respondingRequests.has(m.requestId)}
                   onRespond={(item, approved, options) => { void handleApprovalRespond(item, approved, options) }}
                 />
@@ -1098,7 +1122,9 @@ export function ChatPanel({
                 </div>
               ))
             )}
-            {statusText ? <p className="chat-status">{statusText}...</p> : null}
+            {statusText && !(statusText === t('awaitingConfirmation') && hasPendingApproval(messages))
+              ? <p className="chat-status">{statusText}...</p>
+              : null}
             {error ? <p className="form-error">{error}</p> : null}
           </div>
 

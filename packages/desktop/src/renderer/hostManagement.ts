@@ -3,6 +3,7 @@ import type {
   SavedHostInput,
   SavedHostProfile,
 } from '../shared/ipc-types'
+import type { HostTier } from '../shared/hostTier'
 
 export interface HostEditorFormValues {
   name: string
@@ -14,6 +15,7 @@ export interface HostEditorFormValues {
   password: string
   notes: string
   environmentId?: string
+  tier?: HostTier
 }
 
 export type HostFormValidationError =
@@ -63,6 +65,7 @@ export function hostToEditorForm(host?: SavedHostProfile | null): HostEditorForm
     password: '',
     notes: host?.notes ?? '',
     environmentId: host?.environmentId,
+    tier: host?.tier,
   }
 }
 
@@ -107,6 +110,7 @@ export function convertHostForm(
       password,
       notes: form.notes.trim() || undefined,
       environmentId: form.environmentId,
+      tier: form.tier,
     },
   }
 }

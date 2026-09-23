@@ -2,6 +2,7 @@ import { Search, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type { HostFolder, SavedHostProfile } from '../../shared/ipc-types'
 import { useTranslation } from '../i18n'
+import type { HostSessionStatus } from '../hostSessionStatus'
 import { HostTree } from './HostTree'
 
 export interface HostListProps {
@@ -10,6 +11,7 @@ export interface HostListProps {
   selectedId: string | null
   testingHostId?: string | null
   connectingHostIds?: ReadonlySet<string>
+  hostSessionStatus?: ReadonlyMap<string, HostSessionStatus>
   onSelect: (host: SavedHostProfile) => void
   onConnect: (host: SavedHostProfile) => void
   onAdd: (folderId?: string) => void
@@ -45,7 +47,8 @@ export function HostList(props: HostListProps): JSX.Element {
       </div>
       <HostTree snapshot={{ hosts: props.hosts, folders: props.folders }} query={query}
         selectedId={props.selectedId} testingHostId={props.testingHostId}
-        connectingHostIds={props.connectingHostIds} onSelect={props.onSelect}
+        connectingHostIds={props.connectingHostIds} hostSessionStatus={props.hostSessionStatus}
+        onSelect={props.onSelect}
         onConnect={props.onConnect} onAddHost={props.onAdd} onEditHost={props.onEdit}
         onTestHost={props.onTest} onRequestDeleteHost={props.onRequestDelete}
         onAddFolder={props.onAddFolder} onRenameFolder={props.onRenameFolder}

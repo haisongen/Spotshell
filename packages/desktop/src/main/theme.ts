@@ -8,12 +8,16 @@ export const NATIVE_WINDOW_BACKGROUND: Record<AppTheme, string> = {
 
 export const TITLE_BAR_HEIGHT = 40
 
+// The native caption buttons stop 1px short of the renderer title bar so its
+// bottom border runs the full window width instead of breaking under them.
+const TITLE_BAR_OVERLAY_HEIGHT = TITLE_BAR_HEIGHT - 1
+
 export const NATIVE_TITLE_BAR_OVERLAY: Record<
   AppTheme,
   { color: string; symbolColor: string; height: number }
 > = {
-  dark: { color: '#161a22', symbolColor: '#e6e6e6', height: TITLE_BAR_HEIGHT },
-  light: { color: '#ffffff', symbolColor: '#18202b', height: TITLE_BAR_HEIGHT },
+  dark: { color: '#161a22', symbolColor: '#e6e6e6', height: TITLE_BAR_OVERLAY_HEIGHT },
+  light: { color: '#ffffff', symbolColor: '#18202b', height: TITLE_BAR_OVERLAY_HEIGHT },
 }
 
 export function applyNativeTheme(theme: AppTheme, window?: BrowserWindow | null): void {
