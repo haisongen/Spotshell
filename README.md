@@ -8,10 +8,10 @@ SpotShell 提供 Windows 桌面端和命令行客户端。桌面端适合日常�
 
 | 功能 | 用途 | 详细说明 |
 | --- | --- | --- |
-| 主机与文件夹 | 保存主机、搜索、分组、拖动整理、测试连接 | [桌面端与按钮](docs/user-guide/desktop.md#主机管理) |
+| 主机与文件夹 | 保存主机、标记环境级别（生产 / 预发 / 测试 / 开发）、搜索、分组、拖动整理、测试连接 | [桌面端与按钮](docs/user-guide/desktop.md#主机管理) |
 | 多会话终端 | 多标签连接、重连、复制、粘贴、把选中内容交给 AI | [会话与终端](docs/user-guide/desktop.md#会话与终端) |
 | AI 运维助手 | 结合当前终端与主机上下文分析问题、生成或执行命令 | [AI 助手](docs/user-guide/ai-assistant.md) |
-| 命令审批 | 区分只读、写入和破坏性命令，并按会话策略决定是否确认 | [执行策略](docs/user-guide/ai-assistant.md#执行策略) |
+| 命令审批 | 区分只读、写入和破坏性命令，按会话策略决定是否确认；审批卡片标明目标主机，生产环境额外高亮 | [执行策略](docs/user-guide/ai-assistant.md#执行策略) |
 | 环境与知识库 | 管理环境信息、操作指导、参考资料、文件与历史版本 | [环境与知识库](docs/user-guide/knowledge.md) |
 | 中英文与主题 | 中文/English、深色/浅色主题、可调整的左右面板 | [顶部栏与设置](docs/user-guide/desktop.md#顶部栏) |
 
@@ -21,7 +21,7 @@ SpotShell 提供 Windows 桌面端和命令行客户端。桌面端适合日常�
   <tr>
     <td width="50%">
       <a href="docs/user-guide/desktop.md#主机管理"><img src="docs/assets/screenshots/host-management.png" alt="主机管理界面"></a><br>
-      <strong>主机管理</strong><br><sub>搜索、分组、连接测试和主机备注</sub>
+      <strong>主机管理</strong><br><sub>主机详情、环境级别、分组和主机备注</sub>
     </td>
     <td width="50%">
       <a href="docs/user-guide/desktop.md#会话与终端"><img src="docs/assets/screenshots/terminal-overview.png" alt="多会话 SSH 终端"></a><br>
