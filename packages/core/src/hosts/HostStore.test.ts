@@ -120,6 +120,31 @@ describe('HostStore environment bindings', () => {
   });
 });
 
+describe('HostStore tiers', () => {
+  it('persists, changes, and clears a host tier', () => {
+    const { store, file } = tmpStore();
+    const host = store.add({ name: 'prod', host: 'h', port: 22, username: 'u', tier: 'production' });
+
+    assert.equal(new HostStore(file).get(host.id)?.tier, 'production');
+    assert.equal(store.update(host.id, { tier: 'staging' }).tier, 'staging');
+    assert.equal(store.update(host.id, { tier: undefined }).tier, undefined);
+    assert.equal(new HostStore(file).get(host.id)?.tier, undefined);
+  });
+
+  it('drops unknown tiers from input and from a tampered file', () => {
+    const { store, file } = tmpStore();
+    const host = store.add({
+      name: 'x', host: 'h', port: 22, username: 'u', tier: 'critical' as never,
+    });
+    assert.equal(host.tier, undefined);
+
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    raw.hosts[0].tier = 'PRODUCTION';
+    fs.writeFileSync(file, JSON.stringify(raw));
+    assert.equal(new HostStore(file).get(host.id)?.tier, undefined);
+  });
+});
+
 describe('HostStore.appendNote', () => {
   it('appends a stamped entry to empty and existing notes', () => {
     const { store } = tmpStore();

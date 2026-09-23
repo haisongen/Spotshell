@@ -1,12 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { HOST_TIERS } from './types.js';
 import type {
   FolderRemovalResult,
   HostFolder,
   HostFolderInput,
   HostProfile,
   HostProfileInput,
+  HostTier,
   HostTreeSnapshot,
 } from './types.js';
 
@@ -49,6 +51,7 @@ export class HostStore {
       notes: normalizeNotes(input.notes),
       folderId: input.folderId,
       environmentId: input.environmentId,
+      tier: normalizeTier(input.tier),
     };
     data.hosts.push(profile);
     this.write(data);
@@ -65,6 +68,7 @@ export class HostStore {
     const current = data.hosts[idx]!;
     const next: HostProfile = { ...current, ...patch, id: current.id };
     next.notes = normalizeNotes(next.notes);
+    next.tier = normalizeTier(next.tier);
     data.hosts[idx] = next;
     this.write(data);
     return next;
@@ -259,6 +263,7 @@ function sanitizeHost(value: unknown, folderIds: Set<string>): HostProfile {
     environmentId: typeof host.environmentId === 'string' && host.environmentId
       ? host.environmentId
       : undefined,
+    tier: normalizeTier(host.tier),
   };
 }
 
@@ -273,6 +278,10 @@ function isHostRecord(value: unknown): value is HostProfile {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function normalizeTier(tier: unknown): HostTier | undefined {
+  return (HOST_TIERS as readonly unknown[]).includes(tier) ? tier as HostTier : undefined;
 }
 
 function normalizeNotes(notes: unknown): string | undefined {

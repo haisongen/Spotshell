@@ -142,12 +142,14 @@ export type {
 export { buildKnowledgeAssemblyParts } from './context/knowledgeAssembly.js';
 export type { KnowledgeAssemblyParts } from './context/knowledgeAssembly.js';
 export { HostStore, MAX_HOST_FOLDER_NAME_LENGTH } from './hosts/HostStore.js';
+export { HOST_TIERS } from './hosts/types.js';
 export type {
   FolderRemovalResult,
   HostFolder,
   HostFolderInput,
   HostProfile,
   HostProfileInput,
+  HostTier,
   HostTreeSnapshot,
 } from './hosts/types.js';
 export {

@@ -1,3 +1,7 @@
+/** How much care a host needs; drives the colour cue shown on its sessions. */
+export const HOST_TIERS = ['production', 'staging', 'testing', 'development'] as const;
+export type HostTier = (typeof HOST_TIERS)[number];
+
 export interface HostProfile {
   id: string;
   name: string;
@@ -13,6 +17,8 @@ export interface HostProfile {
   folderId?: string;
   /** Stable environment profile id used as this saved host's local default. */
   environmentId?: string;
+  /** Deployment tier; undefined means unmarked. */
+  tier?: HostTier;
 }
 
 export type HostProfileInput = Omit<HostProfile, 'id'> & { id?: string };
